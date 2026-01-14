@@ -1,0 +1,74 @@
+# GoReleaser configuration for lnk
+# Documentation: https://goreleaser.com
+
+version: 2
+
+project_name: lnk
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lnk
+    main: ./cmd/lnk
+    binary: lnk
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/pp/lnk/internal/version.Version={{.Version}}
+      - -X github.com/pp/lnk/internal/version.Commit={{.Commit}}
+      - -X github.com/pp/lnk/internal/version.Date={{.Date}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: lnk
+    repository:
+      owner: pp
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/pp/lnk"
+    description: "A fast LinkedIn CLI for posting, reading, and messaging"
+    license: "MIT"
+    install: |
+      bin.install "lnk"
+    test: |
+      system "#{bin}/lnk", "--version"
+
+release:
+  github:
+    owner: pp
+    name: lnk
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"

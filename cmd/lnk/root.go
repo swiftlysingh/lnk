@@ -1,0 +1,46 @@
+// Package main provides the lnk CLI entry point.
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/pp/lnk/internal/version"
+	"github.com/spf13/cobra"
+)
+
+// Global flags
+var jsonOutput bool
+
+// rootCmd represents the base command when called without any subcommands.
+var rootCmd = &cobra.Command{
+	Use:   "lnk",
+	Short: "A fast LinkedIn CLI for posting, reading, and messaging",
+	Long: `lnk is a command-line interface for LinkedIn that allows you to
+post updates, read your feed, view profiles, search, and send messages.
+
+Designed to work seamlessly with AI agents through structured JSON output.
+
+Example usage:
+  lnk auth login --browser safari
+  lnk profile me --json
+  lnk feed --limit 10
+  lnk post create "Hello LinkedIn!"`,
+	Version: version.Info(),
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func init() {
+	// Global flags available to all commands
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format (agent-friendly)")
+
+	// Disable default completion command
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+}
