@@ -18,14 +18,103 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// extractChromeCookies extracts LinkedIn cookies from Chrome.
-func extractChromeCookies() ([]Cookie, error) {
-	cookiePath, err := findChromeCookiesPath()
+// chromiumBrowserConfig holds configuration for a Chromium-based browser.
+type chromiumBrowserConfig struct {
+	name           string
+	macOSPath      string
+	linuxPath      string
+	keychainService string
+	keychainAccount string
+}
+
+// getChromiumConfig returns the configuration for a Chromium-based browser.
+func getChromiumConfig(browser Browser) chromiumBrowserConfig {
+	switch browser {
+	case BrowserChrome:
+		return chromiumBrowserConfig{
+			name:            "Chrome",
+			macOSPath:       "Google/Chrome",
+			linuxPath:       "google-chrome",
+			keychainService: "Chrome Safe Storage",
+			keychainAccount: "Chrome",
+		}
+	case BrowserChromium:
+		return chromiumBrowserConfig{
+			name:            "Chromium",
+			macOSPath:       "Chromium",
+			linuxPath:       "chromium",
+			keychainService: "Chromium Safe Storage",
+			keychainAccount: "Chromium",
+		}
+	case BrowserBrave:
+		return chromiumBrowserConfig{
+			name:            "Brave",
+			macOSPath:       "BraveSoftware/Brave-Browser",
+			linuxPath:       "BraveSoftware/Brave-Browser",
+			keychainService: "Brave Safe Storage",
+			keychainAccount: "Brave",
+		}
+	case BrowserEdge:
+		return chromiumBrowserConfig{
+			name:            "Edge",
+			macOSPath:       "Microsoft Edge",
+			linuxPath:       "microsoft-edge",
+			keychainService: "Microsoft Edge Safe Storage",
+			keychainAccount: "Microsoft Edge",
+		}
+	case BrowserArc:
+		return chromiumBrowserConfig{
+			name:            "Arc",
+			macOSPath:       "Arc",
+			linuxPath:       "",  // Arc is macOS only
+			keychainService: "Arc Safe Storage",
+			keychainAccount: "Arc",
+		}
+	case BrowserHelium:
+		return chromiumBrowserConfig{
+			name:            "Helium",
+			macOSPath:       "Helium",
+			linuxPath:       "helium",
+			keychainService: "Helium Safe Storage",
+			keychainAccount: "Helium",
+		}
+	case BrowserOpera:
+		return chromiumBrowserConfig{
+			name:            "Opera",
+			macOSPath:       "com.operasoftware.Opera",
+			linuxPath:       "opera",
+			keychainService: "Opera Safe Storage",
+			keychainAccount: "Opera",
+		}
+	case BrowserVivaldi:
+		return chromiumBrowserConfig{
+			name:            "Vivaldi",
+			macOSPath:       "Vivaldi",
+			linuxPath:       "vivaldi",
+			keychainService: "Vivaldi Safe Storage",
+			keychainAccount: "Vivaldi",
+		}
+	default:
+		return chromiumBrowserConfig{
+			name:            "Chrome",
+			macOSPath:       "Google/Chrome",
+			linuxPath:       "google-chrome",
+			keychainService: "Chrome Safe Storage",
+			keychainAccount: "Chrome",
+		}
+	}
+}
+
+// extractChromiumCookies extracts LinkedIn cookies from a Chromium-based browser.
+func extractChromiumCookies(browser Browser) ([]Cookie, error) {
+	config := getChromiumConfig(browser)
+
+	cookiePath, err := findChromiumCookiesPath(config)
 	if err != nil {
 		return nil, err
 	}
 
-	// Chrome locks the database, so copy it to a temp file.
+	// Browser may lock the database, so copy it to a temp file.
 	tmpFile, err := copyToTemp(cookiePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy cookies database: %w", err)
@@ -33,44 +122,38 @@ func extractChromeCookies() ([]Cookie, error) {
 	defer os.Remove(tmpFile)
 
 	// Get decryption key.
-	key, err := getChromeDecryptionKey()
+	key, err := getChromiumDecryptionKey(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Chrome decryption key: %w", err)
+		return nil, fmt.Errorf("failed to get %s decryption key: %w", config.name, err)
 	}
 
-	return readChromeCookies(tmpFile, key)
+	return readChromiumCookies(tmpFile, key, config.name)
 }
 
-// findChromeCookiesPath locates the Chrome cookies database.
-func findChromeCookiesPath() (string, error) {
+// findChromiumCookiesPath locates the cookies database for a Chromium-based browser.
+func findChromiumCookiesPath(config chromiumBrowserConfig) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
 	var basePath string
 
 	switch runtime.GOOS {
 	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		basePath = filepath.Join(home, "Library", "Application Support", "Google", "Chrome")
+		basePath = filepath.Join(home, "Library", "Application Support", config.macOSPath)
 	case "linux":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
+		if config.linuxPath == "" {
+			return "", fmt.Errorf("%s is not available on Linux", config.name)
 		}
-		// Try Chrome first, then Chromium.
-		chromePath := filepath.Join(home, ".config", "google-chrome")
-		if _, err := os.Stat(chromePath); err == nil {
-			basePath = chromePath
-		} else {
-			chromiumPath := filepath.Join(home, ".config", "chromium")
-			if _, err := os.Stat(chromiumPath); err == nil {
-				basePath = chromiumPath
-			} else {
-				return "", fmt.Errorf("Chrome/Chromium config not found. Is Chrome installed?")
-			}
-		}
+		basePath = filepath.Join(home, ".config", config.linuxPath)
 	default:
-		return "", fmt.Errorf("Chrome cookie extraction not supported on %s", runtime.GOOS)
+		return "", fmt.Errorf("%s cookie extraction not supported on %s", config.name, runtime.GOOS)
+	}
+
+	// Check if browser directory exists.
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("%s not found. Is it installed?", config.name)
 	}
 
 	// Check Default profile first.
@@ -79,13 +162,135 @@ func findChromeCookiesPath() (string, error) {
 		return cookiePath, nil
 	}
 
-	// Try Network/Cookies (newer Chrome versions).
+	// Try Network/Cookies (newer versions).
 	networkCookiePath := filepath.Join(basePath, "Default", "Network", "Cookies")
 	if _, err := os.Stat(networkCookiePath); err == nil {
 		return networkCookiePath, nil
 	}
 
-	return "", fmt.Errorf("Chrome cookies database not found")
+	return "", fmt.Errorf("%s cookies database not found", config.name)
+}
+
+// getChromiumDecryptionKey retrieves the key used to decrypt cookies.
+func getChromiumDecryptionKey(config chromiumBrowserConfig) ([]byte, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return getChromiumKeyMacOS(config)
+	case "linux":
+		return getChromiumKeyLinux(config)
+	default:
+		return nil, fmt.Errorf("decryption not supported on %s", runtime.GOOS)
+	}
+}
+
+// getChromiumKeyMacOS retrieves the encryption key from macOS Keychain.
+func getChromiumKeyMacOS(config chromiumBrowserConfig) ([]byte, error) {
+	// Use security command to get the key from Keychain.
+	cmd := exec.Command("security", "find-generic-password",
+		"-w", // Print password only
+		"-s", config.keychainService,
+		"-a", config.keychainAccount,
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s key from Keychain: %w", config.name, err)
+	}
+
+	password := strings.TrimSpace(string(output))
+
+	// Derive key using PBKDF2.
+	salt := []byte("saltysalt")
+	key := pbkdf2.Key([]byte(password), salt, 1003, 16, sha1.New)
+
+	return key, nil
+}
+
+// getChromiumKeyLinux retrieves the encryption key on Linux.
+func getChromiumKeyLinux(config chromiumBrowserConfig) ([]byte, error) {
+	// On Linux, try GNOME Keyring first, then fallback to hardcoded key.
+	cmd := exec.Command("secret-tool", "lookup",
+		"application", strings.ToLower(config.name),
+	)
+
+	output, err := cmd.Output()
+	if err == nil && len(output) > 0 {
+		password := strings.TrimSpace(string(output))
+		salt := []byte("saltysalt")
+		key := pbkdf2.Key([]byte(password), salt, 1, 16, sha1.New)
+		return key, nil
+	}
+
+	// Fallback to hardcoded key.
+	salt := []byte("saltysalt")
+	key := pbkdf2.Key([]byte("peanuts"), salt, 1, 16, sha1.New)
+
+	return key, nil
+}
+
+// readChromiumCookies reads and decrypts cookies from a Chromium cookies database.
+func readChromiumCookies(dbPath string, key []byte, browserName string) ([]Cookie, error) {
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open cookies database: %w", err)
+	}
+	defer db.Close()
+
+	// Query LinkedIn cookies.
+	query := `
+		SELECT name, encrypted_value, host_key, path, expires_utc, is_secure, is_httponly
+		FROM cookies
+		WHERE host_key LIKE '%linkedin.com'
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query cookies: %w", err)
+	}
+	defer rows.Close()
+
+	var cookies []Cookie
+	for rows.Next() {
+		var name, host, path string
+		var encryptedValue []byte
+		var expiresUTC int64
+		var isSecure, isHTTPOnly int
+
+		if err := rows.Scan(&name, &encryptedValue, &host, &path, &expiresUTC, &isSecure, &isHTTPOnly); err != nil {
+			continue
+		}
+
+		// Decrypt cookie value.
+		value, err := decryptChromeCookie(encryptedValue, key)
+		if err != nil {
+			// Try unencrypted value.
+			value = string(encryptedValue)
+		}
+
+		// Chrome stores time as microseconds since 1601-01-01.
+		expiresAt := chromeTimeToUnix(expiresUTC)
+
+		cookies = append(cookies, Cookie{
+			Domain:     host,
+			Name:       name,
+			Value:      value,
+			Path:       path,
+			ExpiresAt:  expiresAt,
+			IsSecure:   isSecure == 1,
+			IsHTTPOnly: isHTTPOnly == 1,
+		})
+	}
+
+	if len(cookies) == 0 {
+		return nil, fmt.Errorf("no LinkedIn cookies found in %s. Make sure you're logged into LinkedIn", browserName)
+	}
+
+	return cookies, nil
+}
+
+// Legacy function for backwards compatibility.
+func extractChromeCookies() ([]Cookie, error) {
+	return extractChromiumCookies(BrowserChrome)
 }
 
 // getChromeDecryptionKey retrieves the key used to decrypt Chrome cookies.

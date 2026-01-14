@@ -37,23 +37,30 @@ func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with LinkedIn",
-		Long: `Authenticate with LinkedIn using browser cookies or credentials.
+		Long: `Authenticate with LinkedIn using browser cookies.
 
-Browser cookie extraction (recommended):
+Auto-detect default browser (recommended):
+  lnk auth login
+
+Specify browser manually:
   lnk auth login --browser safari
   lnk auth login --browser chrome
-  lnk auth login --browser firefox
+  lnk auth login --browser helium
+  lnk auth login --browser brave
+  lnk auth login --browser arc
 
 Environment variables:
   Set LNK_LI_AT and LNK_JSESSIONID, then run:
   lnk auth login --env
+
+Supported browsers: safari, chrome, chromium, firefox, brave, edge, arc, helium, opera, vivaldi
 
 Note: Browser cookie extraction may require granting Full Disk Access
 to your terminal application in System Preferences > Privacy & Security.`,
 		RunE: runAuthLogin,
 	}
 
-	cmd.Flags().StringVarP(&authBrowser, "browser", "b", "", "Browser to extract cookies from (safari, chrome, firefox)")
+	cmd.Flags().StringVarP(&authBrowser, "browser", "b", "", "Browser to extract cookies from (auto-detected if not specified)")
 	cmd.Flags().StringVarP(&authEmail, "email", "e", "", "LinkedIn email (for password auth)")
 	cmd.Flags().StringVarP(&authPassword, "password", "p", "", "LinkedIn password (for password auth)")
 	cmd.Flags().Bool("env", false, "Use environment variables for authentication")
@@ -67,17 +74,27 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	var creds *api.Credentials
 	var err error
+	var browserUsed auth.Browser
 
 	switch {
 	case useEnv:
 		creds, err = auth.FromEnvironment()
 	case authBrowser != "":
-		browser := auth.Browser(strings.ToLower(authBrowser))
-		creds, err = auth.ExtractLinkedInCookies(browser)
+		browserUsed = auth.Browser(strings.ToLower(authBrowser))
+		creds, err = auth.ExtractLinkedInCookies(browserUsed)
 	case authEmail != "" && authPassword != "":
 		err = fmt.Errorf("username/password authentication not yet implemented")
 	default:
-		err = fmt.Errorf("specify --browser, --env, or --email/--password")
+		// Auto-detect default browser.
+		browserUsed, err = auth.DetectDefaultBrowser()
+		if err != nil {
+			return outputError(jsonOutput, "BROWSER_DETECT_FAILED",
+				fmt.Sprintf("could not detect default browser: %v. Use --browser to specify manually", err))
+		}
+		if !jsonOutput {
+			fmt.Printf("Detected browser: %s\n", browserUsed)
+		}
+		creds, err = auth.ExtractLinkedInCookies(browserUsed)
 	}
 
 	if err != nil {

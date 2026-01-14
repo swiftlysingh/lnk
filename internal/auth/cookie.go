@@ -18,9 +18,16 @@ import (
 type Browser string
 
 const (
-	BrowserSafari  Browser = "safari"
-	BrowserChrome  Browser = "chrome"
-	BrowserFirefox Browser = "firefox"
+	BrowserSafari   Browser = "safari"
+	BrowserChrome   Browser = "chrome"
+	BrowserChromium Browser = "chromium"
+	BrowserFirefox  Browser = "firefox"
+	BrowserBrave    Browser = "brave"
+	BrowserEdge     Browser = "edge"
+	BrowserArc      Browser = "arc"
+	BrowserHelium   Browser = "helium"
+	BrowserOpera    Browser = "opera"
+	BrowserVivaldi  Browser = "vivaldi"
 )
 
 // Cookie represents a browser cookie.
@@ -36,11 +43,27 @@ type Cookie struct {
 
 // SupportedBrowsers returns browsers supported on the current platform.
 func SupportedBrowsers() []Browser {
-	browsers := []Browser{BrowserChrome, BrowserFirefox}
 	if runtime.GOOS == "darwin" {
-		browsers = append([]Browser{BrowserSafari}, browsers...)
+		return []Browser{
+			BrowserSafari, BrowserChrome, BrowserFirefox, BrowserBrave,
+			BrowserArc, BrowserEdge, BrowserHelium, BrowserOpera, BrowserVivaldi,
+		}
 	}
-	return browsers
+	return []Browser{
+		BrowserChrome, BrowserChromium, BrowserFirefox, BrowserBrave,
+		BrowserEdge, BrowserOpera, BrowserVivaldi,
+	}
+}
+
+// IsChromiumBased returns true if the browser uses Chromium's cookie format.
+func IsChromiumBased(browser Browser) bool {
+	switch browser {
+	case BrowserChrome, BrowserChromium, BrowserBrave, BrowserEdge,
+		BrowserArc, BrowserHelium, BrowserOpera, BrowserVivaldi:
+		return true
+	default:
+		return false
+	}
 }
 
 // ExtractLinkedInCookies extracts LinkedIn cookies from the specified browser.
@@ -51,19 +74,23 @@ func ExtractLinkedInCookies(browser Browser) (*api.Credentials, error) {
 	switch browser {
 	case BrowserSafari:
 		if runtime.GOOS != "darwin" {
-			return nil, errors.New("Safari is only available on macOS. Use --browser chrome or --browser firefox")
+			return nil, errors.New("Safari is only available on macOS")
 		}
 		cookies, err = extractSafariCookies()
-	case BrowserChrome:
-		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-			return nil, fmt.Errorf("Chrome cookie extraction not supported on %s", runtime.GOOS)
-		}
-		cookies, err = extractChromeCookies()
+
 	case BrowserFirefox:
 		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 			return nil, fmt.Errorf("Firefox cookie extraction not supported on %s", runtime.GOOS)
 		}
 		cookies, err = extractFirefoxCookies()
+
+	case BrowserChrome, BrowserChromium, BrowserBrave, BrowserEdge,
+		BrowserArc, BrowserHelium, BrowserOpera, BrowserVivaldi:
+		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+			return nil, fmt.Errorf("%s cookie extraction not supported on %s", browser, runtime.GOOS)
+		}
+		cookies, err = extractChromiumCookies(browser)
+
 	default:
 		return nil, fmt.Errorf("unsupported browser: %s. Supported: %v", browser, SupportedBrowsers())
 	}

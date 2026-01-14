@@ -38,10 +38,8 @@ brew install lnk
 ## Quick Start
 
 ```bash
-# 1. Authenticate using browser cookies
-lnk auth login --browser safari   # macOS
-lnk auth login --browser chrome   # macOS/Linux
-lnk auth login --browser firefox  # macOS/Linux
+# 1. Authenticate (auto-detects your default browser)
+lnk auth login
 
 # 2. Check auth status
 lnk auth status
@@ -58,21 +56,25 @@ lnk post create "Hello LinkedIn!"
 
 ## Authentication
 
-lnk supports multiple authentication methods:
+lnk auto-detects your default browser and extracts LinkedIn cookies.
 
-### Browser Cookie Extraction (Recommended)
-
-Extract cookies from your browser where you're logged into LinkedIn:
+### Auto-Detect (Recommended)
 
 ```bash
-# Safari (macOS only)
-lnk auth login --browser safari
+lnk auth login
+```
 
-# Chrome (macOS/Linux)
-lnk auth login --browser chrome
+This will automatically detect and use your default browser (Safari, Chrome, Helium, Brave, Arc, Firefox, etc.).
 
-# Firefox (macOS/Linux)
-lnk auth login --browser firefox
+### Specify Browser Manually
+
+```bash
+lnk auth login --browser safari   # macOS only
+lnk auth login --browser chrome   # macOS/Linux
+lnk auth login --browser helium   # macOS
+lnk auth login --browser brave    # macOS/Linux
+lnk auth login --browser arc      # macOS
+lnk auth login --browser firefox  # macOS/Linux
 ```
 
 **Note**: May require granting Full Disk Access to your terminal application in System Preferences > Privacy & Security.
@@ -190,10 +192,10 @@ You can customize the location using the `XDG_CONFIG_HOME` environment variable.
 
 ## Supported Platforms
 
-| Platform | Safari | Chrome | Firefox |
-|----------|--------|--------|---------|
-| macOS | Yes | Yes | Yes |
-| Linux | No | Yes | Yes |
+| Platform | Safari | Chrome | Firefox | Brave | Edge | Arc | Helium | Opera | Vivaldi |
+|----------|--------|--------|---------|-------|------|-----|--------|-------|---------|
+| macOS | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Linux | No | Yes | Yes | Yes | Yes | No | No | Yes | Yes |
 
 ## Troubleshooting
 
