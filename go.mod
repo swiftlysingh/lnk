@@ -1,8 +1,12 @@
 module github.com/pp/lnk
 
-go 1.21
+go 1.24.0
 
-require github.com/spf13/cobra v1.8.0
+require (
+	github.com/mattn/go-sqlite3 v1.14.33
+	github.com/spf13/cobra v1.8.0
+	golang.org/x/crypto v0.47.0
+)
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

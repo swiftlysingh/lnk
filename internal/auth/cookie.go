@@ -55,9 +55,15 @@ func ExtractLinkedInCookies(browser Browser) (*api.Credentials, error) {
 		}
 		cookies, err = extractSafariCookies()
 	case BrowserChrome:
-		return nil, errors.New("Chrome cookie extraction not yet implemented. Use --env with LNK_LI_AT and LNK_JSESSIONID")
+		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+			return nil, fmt.Errorf("Chrome cookie extraction not supported on %s", runtime.GOOS)
+		}
+		cookies, err = extractChromeCookies()
 	case BrowserFirefox:
-		return nil, errors.New("Firefox cookie extraction not yet implemented. Use --env with LNK_LI_AT and LNK_JSESSIONID")
+		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+			return nil, fmt.Errorf("Firefox cookie extraction not supported on %s", runtime.GOOS)
+		}
+		cookies, err = extractFirefoxCookies()
 	default:
 		return nil, fmt.Errorf("unsupported browser: %s. Supported: %v", browser, SupportedBrowsers())
 	}
