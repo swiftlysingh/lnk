@@ -48,4 +48,5 @@ func init() {
 
 	// Add commands
 	rootCmd.AddCommand(commands.NewAuthCmd())
+	rootCmd.AddCommand(commands.NewProfileCmd())
 }

@@ -1,0 +1,184 @@
+package api
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestParseProfileEntity(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonData   string
+		wantFirst  string
+		wantLast   string
+		wantURN    string
+		wantPublic string
+	}{
+		{
+			name: "direct profile fields",
+			jsonData: `{
+				"entityUrn": "urn:li:fsd_profile:ACoAAAA",
+				"publicIdentifier": "johndoe",
+				"firstName": "John",
+				"lastName": "Doe",
+				"headline": "Software Engineer"
+			}`,
+			wantFirst:  "John",
+			wantLast:   "Doe",
+			wantURN:    "urn:li:fsd_profile:ACoAAAA",
+			wantPublic: "johndoe",
+		},
+		{
+			name: "miniProfile nested",
+			jsonData: `{
+				"miniProfile": {
+					"firstName": "Jane",
+					"lastName": "Smith",
+					"publicIdentifier": "janesmith",
+					"entityUrn": "urn:li:member:12345",
+					"occupation": "Product Manager"
+				}
+			}`,
+			wantFirst:  "Jane",
+			wantLast:   "Smith",
+			wantURN:    "urn:li:member:12345",
+			wantPublic: "janesmith",
+		},
+		{
+			name: "occupation fallback to headline",
+			jsonData: `{
+				"firstName": "Bob",
+				"lastName": "Builder",
+				"occupation": "Construction Expert"
+			}`,
+			wantFirst: "Bob",
+			wantLast:  "Builder",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := &Profile{}
+			err := parseProfileEntity(json.RawMessage(tt.jsonData), profile)
+			if err != nil {
+				t.Fatalf("parseProfileEntity error: %v", err)
+			}
+
+			if tt.wantFirst != "" && profile.FirstName != tt.wantFirst {
+				t.Errorf("FirstName = %q, want %q", profile.FirstName, tt.wantFirst)
+			}
+			if tt.wantLast != "" && profile.LastName != tt.wantLast {
+				t.Errorf("LastName = %q, want %q", profile.LastName, tt.wantLast)
+			}
+			if tt.wantURN != "" && profile.URN != tt.wantURN {
+				t.Errorf("URN = %q, want %q", profile.URN, tt.wantURN)
+			}
+			if tt.wantPublic != "" && profile.PublicID != tt.wantPublic {
+				t.Errorf("PublicID = %q, want %q", profile.PublicID, tt.wantPublic)
+			}
+		})
+	}
+}
+
+func TestParseProfileFromResponse(t *testing.T) {
+	tests := []struct {
+		name      string
+		resp      *VoyagerResponse
+		wantErr   bool
+		wantFirst string
+	}{
+		{
+			name:    "nil response",
+			resp:    nil,
+			wantErr: true,
+		},
+		{
+			name: "empty response",
+			resp: &VoyagerResponse{
+				Data:     nil,
+				Included: nil,
+			},
+			wantErr: true,
+		},
+		{
+			name: "profile in included",
+			resp: &VoyagerResponse{
+				Data: json.RawMessage(`{}`),
+				Included: []json.RawMessage{
+					json.RawMessage(`{
+						"$type": "com.linkedin.voyager.identity.shared.MiniProfile",
+						"entityUrn": "urn:li:fsd_profile:ACoAAAA",
+						"firstName": "Alice",
+						"lastName": "Wonderland"
+					}`),
+				},
+			},
+			wantErr:   false,
+			wantFirst: "Alice",
+		},
+		{
+			name: "profile in data",
+			resp: &VoyagerResponse{
+				Data: json.RawMessage(`{
+					"firstName": "Charlie",
+					"lastName": "Brown",
+					"entityUrn": "urn:li:fsd_profile:test"
+				}`),
+				Included: nil,
+			},
+			wantErr:   false,
+			wantFirst: "Charlie",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile, err := parseProfileFromResponse(tt.resp)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantFirst != "" && profile.FirstName != tt.wantFirst {
+				t.Errorf("FirstName = %q, want %q", profile.FirstName, tt.wantFirst)
+			}
+		})
+	}
+}
+
+func TestVoyagerResponsePaging(t *testing.T) {
+	jsonData := `{
+		"data": {},
+		"included": [],
+		"paging": {
+			"count": 10,
+			"start": 0,
+			"total": 100,
+			"links": [
+				{"rel": "next", "href": "/path?start=10", "type": "application/json"}
+			]
+		}
+	}`
+
+	var resp VoyagerResponse
+	if err := json.Unmarshal([]byte(jsonData), &resp); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if resp.Paging == nil {
+		t.Fatal("Paging is nil")
+	}
+	if resp.Paging.Count != 10 {
+		t.Errorf("Count = %d, want 10", resp.Paging.Count)
+	}
+	if resp.Paging.Total != 100 {
+		t.Errorf("Total = %d, want 100", resp.Paging.Total)
+	}
+	if len(resp.Paging.Links) != 1 {
+		t.Errorf("Links count = %d, want 1", len(resp.Paging.Links))
+	}
+}

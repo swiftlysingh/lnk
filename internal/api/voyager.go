@@ -1,0 +1,245 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+// VoyagerResponse wraps LinkedIn's Voyager API response format.
+type VoyagerResponse struct {
+	Data     json.RawMessage `json:"data"`
+	Included []json.RawMessage `json:"included"`
+	Paging   *Paging           `json:"paging,omitempty"`
+}
+
+// Paging contains pagination information.
+type Paging struct {
+	Count int    `json:"count"`
+	Start int    `json:"start"`
+	Total int    `json:"total,omitempty"`
+	Links []Link `json:"links,omitempty"`
+}
+
+// Link represents a pagination link.
+type Link struct {
+	Rel  string `json:"rel"`
+	Href string `json:"href"`
+	Type string `json:"type"`
+}
+
+// ProfileResponse represents the profile API response.
+type ProfileResponse struct {
+	Profile   *Profile `json:"profile"`
+	RawData   json.RawMessage
+	RawIncluded []json.RawMessage
+}
+
+// GetMyProfile fetches the authenticated user's profile.
+func (c *Client) GetMyProfile(ctx context.Context) (*Profile, error) {
+	// Use the /me endpoint to get current user.
+	var result VoyagerResponse
+	err := c.Get(ctx, "/identity/dash/profiles?q=memberIdentity&memberIdentity=me&decorationId=com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-19", nil, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseProfileFromResponse(&result)
+}
+
+// GetProfile fetches a profile by public identifier (username).
+func (c *Client) GetProfile(ctx context.Context, publicID string) (*Profile, error) {
+	// URL encode the public ID.
+	encodedID := url.PathEscape(publicID)
+
+	path := fmt.Sprintf("/identity/profiles/%s/profileView", encodedID)
+	var result VoyagerResponse
+	if err := c.Get(ctx, path, nil, &result); err != nil {
+		return nil, err
+	}
+
+	return parseProfileFromResponse(&result)
+}
+
+// GetProfileByURN fetches a profile by URN.
+func (c *Client) GetProfileByURN(ctx context.Context, urn string) (*Profile, error) {
+	// Extract the member ID from URN.
+	// URN format: urn:li:member:123456 or urn:li:fsd_profile:ACoAAAxxxxxx
+	parts := strings.Split(urn, ":")
+	if len(parts) < 4 {
+		return nil, &Error{
+			Code:    ErrCodeInvalidInput,
+			Message: fmt.Sprintf("invalid URN format: %s", urn),
+		}
+	}
+
+	memberID := parts[len(parts)-1]
+
+	// Use the profile API with URN.
+	query := url.Values{}
+	query.Set("q", "memberIdentity")
+	query.Set("memberIdentity", memberID)
+	query.Set("decorationId", "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-19")
+
+	var result VoyagerResponse
+	if err := c.Get(ctx, "/identity/dash/profiles", query, &result); err != nil {
+		return nil, err
+	}
+
+	return parseProfileFromResponse(&result)
+}
+
+// parseProfileFromResponse extracts a Profile from a Voyager response.
+func parseProfileFromResponse(resp *VoyagerResponse) (*Profile, error) {
+	if resp == nil {
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "empty response",
+		}
+	}
+
+	// The profile data can be in different places depending on the endpoint.
+	// Try to find it in the included array first.
+	profile := &Profile{}
+
+	for _, item := range resp.Included {
+		var entity map[string]json.RawMessage
+		if err := json.Unmarshal(item, &entity); err != nil {
+			continue
+		}
+
+		// Check for profile entity.
+		if entityURN, ok := entity["entityUrn"]; ok {
+			var urn string
+			if err := json.Unmarshal(entityURN, &urn); err == nil {
+				if strings.Contains(urn, "fsd_profile") || strings.Contains(urn, "member") {
+					if err := parseProfileEntity(item, profile); err == nil {
+						if profile.FirstName != "" || profile.PublicID != "" {
+							return profile, nil
+						}
+					}
+				}
+			}
+		}
+
+		// Check for $type field.
+		if typeField, ok := entity["$type"]; ok {
+			var typeName string
+			if err := json.Unmarshal(typeField, &typeName); err == nil {
+				if strings.Contains(typeName, "Profile") || strings.Contains(typeName, "MiniProfile") {
+					if err := parseProfileEntity(item, profile); err == nil {
+						if profile.FirstName != "" || profile.PublicID != "" {
+							return profile, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Try parsing the data field directly.
+	if len(resp.Data) > 0 {
+		if err := parseProfileEntity(resp.Data, profile); err == nil {
+			if profile.FirstName != "" || profile.PublicID != "" {
+				return profile, nil
+			}
+		}
+	}
+
+	// If we got here with some data, return what we have.
+	if profile.URN != "" || profile.FirstName != "" || profile.PublicID != "" {
+		return profile, nil
+	}
+
+	return nil, &Error{
+		Code:    ErrCodeNotFound,
+		Message: "profile not found in response",
+	}
+}
+
+// parseProfileEntity extracts profile fields from a JSON entity.
+func parseProfileEntity(data json.RawMessage, profile *Profile) error {
+	var entity struct {
+		EntityURN      string `json:"entityUrn"`
+		PublicIdentifier string `json:"publicIdentifier"`
+		FirstName      string `json:"firstName"`
+		LastName       string `json:"lastName"`
+		Headline       string `json:"headline"`
+		Summary        string `json:"summary"`
+		LocationName   string `json:"locationName"`
+		GeoLocationName string `json:"geoLocationName"`
+		ProfilePicture struct {
+			DisplayImageReference struct {
+				VectorImage struct {
+					RootURL string `json:"rootUrl"`
+				} `json:"vectorImage"`
+			} `json:"displayImageReference"`
+		} `json:"profilePicture"`
+		// Alternative field names.
+		Occupation string `json:"occupation"`
+		MiniProfile struct {
+			FirstName string `json:"firstName"`
+			LastName  string `json:"lastName"`
+			Occupation string `json:"occupation"`
+			PublicIdentifier string `json:"publicIdentifier"`
+			EntityUrn string `json:"entityUrn"`
+		} `json:"miniProfile"`
+	}
+
+	if err := json.Unmarshal(data, &entity); err != nil {
+		return err
+	}
+
+	// Set fields from direct properties.
+	if entity.EntityURN != "" {
+		profile.URN = entity.EntityURN
+	}
+	if entity.PublicIdentifier != "" {
+		profile.PublicID = entity.PublicIdentifier
+		profile.ProfileURL = fmt.Sprintf("https://www.linkedin.com/in/%s", entity.PublicIdentifier)
+	}
+	if entity.FirstName != "" {
+		profile.FirstName = entity.FirstName
+	}
+	if entity.LastName != "" {
+		profile.LastName = entity.LastName
+	}
+	if entity.Headline != "" {
+		profile.Headline = entity.Headline
+	} else if entity.Occupation != "" {
+		profile.Headline = entity.Occupation
+	}
+	if entity.Summary != "" {
+		profile.Summary = entity.Summary
+	}
+	if entity.LocationName != "" {
+		profile.Location = entity.LocationName
+	} else if entity.GeoLocationName != "" {
+		profile.Location = entity.GeoLocationName
+	}
+	if entity.ProfilePicture.DisplayImageReference.VectorImage.RootURL != "" {
+		profile.ProfilePicURL = entity.ProfilePicture.DisplayImageReference.VectorImage.RootURL
+	}
+
+	// Set fields from miniProfile if main fields are empty.
+	if profile.FirstName == "" && entity.MiniProfile.FirstName != "" {
+		profile.FirstName = entity.MiniProfile.FirstName
+	}
+	if profile.LastName == "" && entity.MiniProfile.LastName != "" {
+		profile.LastName = entity.MiniProfile.LastName
+	}
+	if profile.Headline == "" && entity.MiniProfile.Occupation != "" {
+		profile.Headline = entity.MiniProfile.Occupation
+	}
+	if profile.PublicID == "" && entity.MiniProfile.PublicIdentifier != "" {
+		profile.PublicID = entity.MiniProfile.PublicIdentifier
+		profile.ProfileURL = fmt.Sprintf("https://www.linkedin.com/in/%s", entity.MiniProfile.PublicIdentifier)
+	}
+	if profile.URN == "" && entity.MiniProfile.EntityUrn != "" {
+		profile.URN = entity.MiniProfile.EntityUrn
+	}
+
+	return nil
+}
