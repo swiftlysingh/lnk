@@ -243,3 +243,196 @@ func parseProfileEntity(data json.RawMessage, profile *Profile) error {
 
 	return nil
 }
+
+// FeedOptions configures feed fetching.
+type FeedOptions struct {
+	Limit int
+	Start int
+}
+
+// GetFeed fetches the user's LinkedIn feed.
+func (c *Client) GetFeed(ctx context.Context, opts *FeedOptions) ([]FeedItem, error) {
+	if opts == nil {
+		opts = &FeedOptions{Limit: 10}
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 10
+	}
+
+	query := url.Values{}
+	query.Set("count", fmt.Sprintf("%d", opts.Limit))
+	query.Set("start", fmt.Sprintf("%d", opts.Start))
+	query.Set("q", "feedByType")
+	query.Set("feedType", "HOMEPAGE")
+
+	var result VoyagerResponse
+	if err := c.Get(ctx, "/feed/updatesV2", query, &result); err != nil {
+		return nil, err
+	}
+
+	return parseFeedFromResponse(&result)
+}
+
+// parseFeedFromResponse extracts feed items from a Voyager response.
+func parseFeedFromResponse(resp *VoyagerResponse) ([]FeedItem, error) {
+	if resp == nil {
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "empty response",
+		}
+	}
+
+	var items []FeedItem
+
+	// Feed items are typically in the included array.
+	for _, raw := range resp.Included {
+		var entity map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+
+		// Look for update entities.
+		if typeField, ok := entity["$type"]; ok {
+			var typeName string
+			if err := json.Unmarshal(typeField, &typeName); err == nil {
+				if strings.Contains(typeName, "Update") || strings.Contains(typeName, "Activity") {
+					item, err := parseFeedItem(raw)
+					if err == nil && item != nil {
+						items = append(items, *item)
+					}
+				}
+			}
+		}
+	}
+
+	return items, nil
+}
+
+// parseFeedItem parses a single feed item.
+func parseFeedItem(data json.RawMessage) (*FeedItem, error) {
+	var entity struct {
+		EntityURN string `json:"entityUrn"`
+		Actor     struct {
+			URN  string `json:"urn"`
+			Name struct {
+				Text string `json:"text"`
+			} `json:"name"`
+		} `json:"actor"`
+		Commentary struct {
+			Text struct {
+				Text string `json:"text"`
+			} `json:"text"`
+		} `json:"commentary"`
+		SocialDetail struct {
+			URN          string `json:"urn"`
+			TotalLikes   int    `json:"totalSocialActivityCounts,omitempty"`
+			LikesCount   int    `json:"likes,omitempty"`
+			CommentsCount int   `json:"comments,omitempty"`
+		} `json:"socialDetail"`
+		CreatedAt int64 `json:"createdAt"`
+	}
+
+	if err := json.Unmarshal(data, &entity); err != nil {
+		return nil, err
+	}
+
+	if entity.EntityURN == "" {
+		return nil, fmt.Errorf("no URN in feed item")
+	}
+
+	item := &FeedItem{
+		URN:  entity.EntityURN,
+		Type: "update",
+	}
+
+	if entity.Commentary.Text.Text != "" {
+		item.Post = &Post{
+			URN:  entity.EntityURN,
+			Text: entity.Commentary.Text.Text,
+		}
+	}
+
+	if entity.Actor.Name.Text != "" {
+		item.Actor = &Profile{
+			URN:       entity.Actor.URN,
+			FirstName: entity.Actor.Name.Text,
+		}
+	}
+
+	return item, nil
+}
+
+// CreatePost creates a new LinkedIn post.
+func (c *Client) CreatePost(ctx context.Context, text string) (*Post, error) {
+	// First get the current user's URN.
+	profile, err := c.GetMyProfile(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get profile for posting: %w", err)
+	}
+
+	authorURN := profile.URN
+	if authorURN == "" {
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "could not determine author URN",
+		}
+	}
+
+	// Create post payload.
+	payload := map[string]any{
+		"author":               authorURN,
+		"lifecycleState":       "PUBLISHED",
+		"specificContent": map[string]any{
+			"com.linkedin.ugc.ShareContent": map[string]any{
+				"shareCommentary": map[string]any{
+					"text": text,
+				},
+				"shareMediaCategory": "NONE",
+			},
+		},
+		"visibility": map[string]any{
+			"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+		},
+	}
+
+	var result map[string]any
+	if err := c.Post(ctx, "/ugcPosts", payload, &result); err != nil {
+		return nil, err
+	}
+
+	// Extract the created post URN.
+	postURN := ""
+	if id, ok := result["id"].(string); ok {
+		postURN = id
+	}
+
+	return &Post{
+		URN:       postURN,
+		AuthorURN: authorURN,
+		Text:      text,
+	}, nil
+}
+
+// GetPost fetches a post by URN.
+func (c *Client) GetPost(ctx context.Context, urn string) (*Post, error) {
+	// URL encode the URN.
+	encodedURN := url.PathEscape(urn)
+
+	var result VoyagerResponse
+	if err := c.Get(ctx, "/feed/updates/"+encodedURN, nil, &result); err != nil {
+		return nil, err
+	}
+
+	// Parse the post from response.
+	for _, raw := range result.Included {
+		item, err := parseFeedItem(raw)
+		if err == nil && item != nil && item.Post != nil {
+			return item.Post, nil
+		}
+	}
+
+	return nil, &Error{
+		Code:    ErrCodeNotFound,
+		Message: "post not found",
+	}
+}
