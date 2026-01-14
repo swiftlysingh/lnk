@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pp/lnk/internal/commands"
 	"github.com/pp/lnk/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -22,7 +23,8 @@ post updates, read your feed, view profiles, search, and send messages.
 Designed to work seamlessly with AI agents through structured JSON output.
 
 Example usage:
-  lnk auth login --browser safari
+  lnk auth login --browser safari    # macOS
+  lnk auth login --browser chrome    # macOS/Linux
   lnk profile me --json
   lnk feed --limit 10
   lnk post create "Hello LinkedIn!"`,
@@ -43,4 +45,7 @@ func init() {
 
 	// Disable default completion command
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
+	// Add commands
+	rootCmd.AddCommand(commands.NewAuthCmd())
 }
