@@ -4,6 +4,7 @@ package commands
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -195,7 +196,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 
 	creds, err := store.Load()
 	if err != nil {
-		if err == auth.ErrNoCredentials {
+		if errors.Is(err, auth.ErrNoCredentials) {
 			if jsonOutput {
 				return outputJSON(api.Response[map[string]any]{
 					Success: true,
@@ -289,7 +290,7 @@ func outputJSON(v any) error {
 
 func outputError(jsonOutput bool, code, message string) error {
 	if jsonOutput {
-		outputJSON(api.Response[any]{
+		_ = outputJSON(api.Response[any]{
 			Success: false,
 			Error: &api.Error{
 				Code:    code,
@@ -315,7 +316,7 @@ func promptInput(prompt string) (string, error) {
 // promptPassword prompts the user for password input without echoing.
 func promptPassword(prompt string) (string, error) {
 	fmt.Print(prompt)
-	password, err := term.ReadPassword(int(syscall.Stdin))
+	password, err := term.ReadPassword(syscall.Stdin)
 	fmt.Println() // Print newline after password input.
 	if err != nil {
 		return "", err

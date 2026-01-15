@@ -35,13 +35,13 @@ func findFirefoxProfile() (string, error) {
 	var profilesDir string
 
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
 		}
 		profilesDir = filepath.Join(home, "Library", "Application Support", "Firefox", "Profiles")
-	case "linux":
+	case osLinux:
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err

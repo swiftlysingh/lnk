@@ -482,6 +482,8 @@ type SearchOptions struct {
 }
 
 // SearchPeople searches for people on LinkedIn.
+//
+//nolint:dupl // SearchPeople and SearchCompanies have similar structure but different result types
 func (c *Client) SearchPeople(ctx context.Context, query string, opts *SearchOptions) ([]Profile, error) {
 	if opts == nil {
 		opts = &SearchOptions{Limit: 10}
@@ -591,6 +593,8 @@ func parseSearchPeopleResults(included []json.RawMessage) ([]Profile, error) {
 }
 
 // SearchCompanies searches for companies on LinkedIn.
+//
+//nolint:dupl // SearchPeople and SearchCompanies have similar structure but different result types
 func (c *Client) SearchCompanies(ctx context.Context, query string, opts *SearchOptions) ([]Company, error) {
 	if opts == nil {
 		opts = &SearchOptions{Limit: 10}
@@ -777,18 +781,10 @@ func (c *Client) GetConversations(ctx context.Context, opts *MessagingOptions) (
 	return []Conversation{}, nil
 }
 
-// parseConversationsFromResponse extracts conversations from a Voyager response.
-func parseConversationsFromResponse(resp *VoyagerResponse) ([]Conversation, error) {
-	if resp == nil {
-		return nil, &Error{
-			Code:    ErrCodeServerError,
-			Message: "empty response",
-		}
-	}
-
-	// Build a map of profiles from included data.
+// extractProfilesFromIncluded builds a map of profiles from the included data.
+func extractProfilesFromIncluded(included []json.RawMessage) map[string]*Profile {
 	profiles := make(map[string]*Profile)
-	for _, raw := range resp.Included {
+	for _, raw := range included {
 		var entity struct {
 			Type             string `json:"$type"`
 			EntityURN        string `json:"entityUrn"`
@@ -812,6 +808,19 @@ func parseConversationsFromResponse(resp *VoyagerResponse) ([]Conversation, erro
 			}
 		}
 	}
+	return profiles
+}
+
+// parseConversationsFromResponse extracts conversations from a Voyager response.
+func parseConversationsFromResponse(resp *VoyagerResponse) ([]Conversation, error) {
+	if resp == nil {
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "empty response",
+		}
+	}
+
+	profiles := extractProfilesFromIncluded(resp.Included)
 
 	var conversations []Conversation
 	for _, raw := range resp.Included {
@@ -880,32 +889,7 @@ func parseConversationWithMessages(resp *VoyagerResponse, conversationURN string
 		}
 	}
 
-	// Build a map of profiles from included data.
-	profiles := make(map[string]*Profile)
-	for _, raw := range resp.Included {
-		var entity struct {
-			Type             string `json:"$type"`
-			EntityURN        string `json:"entityUrn"`
-			FirstName        string `json:"firstName"`
-			LastName         string `json:"lastName"`
-			Occupation       string `json:"occupation"`
-			PublicIdentifier string `json:"publicIdentifier"`
-		}
-		if err := json.Unmarshal(raw, &entity); err != nil {
-			continue
-		}
-		if strings.Contains(entity.Type, "MiniProfile") || strings.Contains(entity.Type, "Profile") {
-			if entity.EntityURN != "" {
-				profiles[entity.EntityURN] = &Profile{
-					URN:       entity.EntityURN,
-					FirstName: entity.FirstName,
-					LastName:  entity.LastName,
-					Headline:  entity.Occupation,
-					PublicID:  entity.PublicIdentifier,
-				}
-			}
-		}
-	}
+	profiles := extractProfilesFromIncluded(resp.Included)
 
 	conv := &Conversation{URN: conversationURN}
 	var messages []Message
