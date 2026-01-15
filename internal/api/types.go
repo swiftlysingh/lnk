@@ -18,14 +18,14 @@ type Error struct {
 
 // Common error codes.
 const (
-	ErrCodeAuthExpired   = "AUTH_EXPIRED"
-	ErrCodeAuthRequired  = "AUTH_REQUIRED"
-	ErrCodeRateLimited   = "RATE_LIMITED"
-	ErrCodeNotFound      = "NOT_FOUND"
-	ErrCodeForbidden     = "FORBIDDEN"
-	ErrCodeServerError   = "SERVER_ERROR"
-	ErrCodeNetworkError  = "NETWORK_ERROR"
-	ErrCodeInvalidInput  = "INVALID_INPUT"
+	ErrCodeAuthExpired  = "AUTH_EXPIRED"
+	ErrCodeAuthRequired = "AUTH_REQUIRED"
+	ErrCodeRateLimited  = "RATE_LIMITED"
+	ErrCodeNotFound     = "NOT_FOUND"
+	ErrCodeForbidden    = "FORBIDDEN"
+	ErrCodeServerError  = "SERVER_ERROR"
+	ErrCodeNetworkError = "NETWORK_ERROR"
+	ErrCodeInvalidInput = "INVALID_INPUT"
 )
 
 // Credentials holds LinkedIn authentication cookies.
@@ -62,14 +62,14 @@ type Profile struct {
 
 // Post represents a LinkedIn post.
 type Post struct {
-	URN         string    `json:"urn"`
-	AuthorURN   string    `json:"authorUrn"`
-	AuthorName  string    `json:"authorName,omitempty"`
-	Text        string    `json:"text"`
-	CreatedAt   time.Time `json:"createdAt"`
-	LikeCount   int       `json:"likeCount"`
-	CommentCount int      `json:"commentCount"`
-	ShareCount  int       `json:"shareCount"`
+	URN          string    `json:"urn"`
+	AuthorURN    string    `json:"authorUrn"`
+	AuthorName   string    `json:"authorName,omitempty"`
+	Text         string    `json:"text"`
+	CreatedAt    time.Time `json:"createdAt"`
+	LikeCount    int       `json:"likeCount"`
+	CommentCount int       `json:"commentCount"`
+	ShareCount   int       `json:"shareCount"`
 }
 
 // FeedItem represents an item in the LinkedIn feed.
@@ -102,11 +102,11 @@ type Message struct {
 
 // SearchResult represents a search result item.
 type SearchResult struct {
-	URN      string   `json:"urn"`
-	Type     string   `json:"type"`
-	Profile  *Profile `json:"profile,omitempty"`
-	Company  *Company `json:"company,omitempty"`
-	Job      *Job     `json:"job,omitempty"`
+	URN     string   `json:"urn"`
+	Type    string   `json:"type"`
+	Profile *Profile `json:"profile,omitempty"`
+	Company *Company `json:"company,omitempty"`
+	Job     *Job     `json:"job,omitempty"`
 }
 
 // Company represents a LinkedIn company.
@@ -125,10 +125,10 @@ type Company struct {
 
 // Job represents a LinkedIn job posting.
 type Job struct {
-	URN         string `json:"urn"`
-	Title       string `json:"title"`
-	CompanyName string `json:"companyName"`
-	Location    string `json:"location,omitempty"`
+	URN         string    `json:"urn"`
+	Title       string    `json:"title"`
+	CompanyName string    `json:"companyName"`
+	Location    string    `json:"location,omitempty"`
 	PostedAt    time.Time `json:"postedAt,omitempty"`
-	Description string `json:"description,omitempty"`
+	Description string    `json:"description,omitempty"`
 }

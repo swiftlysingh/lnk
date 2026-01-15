@@ -11,7 +11,7 @@ import (
 
 // VoyagerResponse wraps LinkedIn's Voyager API response format.
 type VoyagerResponse struct {
-	Data     json.RawMessage `json:"data"`
+	Data     json.RawMessage   `json:"data"`
 	Included []json.RawMessage `json:"included"`
 	Paging   *Paging           `json:"paging,omitempty"`
 }
@@ -33,8 +33,8 @@ type Link struct {
 
 // ProfileResponse represents the profile API response.
 type ProfileResponse struct {
-	Profile   *Profile `json:"profile"`
-	RawData   json.RawMessage
+	Profile     *Profile `json:"profile"`
+	RawData     json.RawMessage
 	RawIncluded []json.RawMessage
 }
 
@@ -168,15 +168,15 @@ func parseProfileFromResponse(resp *VoyagerResponse) (*Profile, error) {
 // parseProfileEntity extracts profile fields from a JSON entity.
 func parseProfileEntity(data json.RawMessage, profile *Profile) error {
 	var entity struct {
-		EntityURN      string `json:"entityUrn"`
+		EntityURN        string `json:"entityUrn"`
 		PublicIdentifier string `json:"publicIdentifier"`
-		FirstName      string `json:"firstName"`
-		LastName       string `json:"lastName"`
-		Headline       string `json:"headline"`
-		Summary        string `json:"summary"`
-		LocationName   string `json:"locationName"`
-		GeoLocationName string `json:"geoLocationName"`
-		ProfilePicture struct {
+		FirstName        string `json:"firstName"`
+		LastName         string `json:"lastName"`
+		Headline         string `json:"headline"`
+		Summary          string `json:"summary"`
+		LocationName     string `json:"locationName"`
+		GeoLocationName  string `json:"geoLocationName"`
+		ProfilePicture   struct {
 			DisplayImageReference struct {
 				VectorImage struct {
 					RootURL string `json:"rootUrl"`
@@ -184,13 +184,13 @@ func parseProfileEntity(data json.RawMessage, profile *Profile) error {
 			} `json:"displayImageReference"`
 		} `json:"profilePicture"`
 		// Alternative field names.
-		Occupation string `json:"occupation"`
+		Occupation  string `json:"occupation"`
 		MiniProfile struct {
-			FirstName string `json:"firstName"`
-			LastName  string `json:"lastName"`
-			Occupation string `json:"occupation"`
+			FirstName        string `json:"firstName"`
+			LastName         string `json:"lastName"`
+			Occupation       string `json:"occupation"`
 			PublicIdentifier string `json:"publicIdentifier"`
-			EntityUrn string `json:"entityUrn"`
+			EntityUrn        string `json:"entityUrn"`
 		} `json:"miniProfile"`
 	}
 
@@ -274,19 +274,19 @@ func (c *Client) GetFeed(ctx context.Context, opts *FeedOptions) ([]FeedItem, er
 		{
 			path: "/feed/updatesV2",
 			query: url.Values{
-				"count":    {fmt.Sprintf("%d", opts.Limit)},
-				"start":    {fmt.Sprintf("%d", opts.Start)},
-				"q":        {"feedByHasLikedOrCommented"},
+				"count":     {fmt.Sprintf("%d", opts.Limit)},
+				"start":     {fmt.Sprintf("%d", opts.Start)},
+				"q":         {"feedByHasLikedOrCommented"},
 				"moduleKey": {"feedModule"},
 			},
 		},
 		{
 			path: "/feed/updatesV2",
 			query: url.Values{
-				"count":     {fmt.Sprintf("%d", opts.Limit)},
-				"start":     {fmt.Sprintf("%d", opts.Start)},
-				"q":         {"feedByType"},
-				"feedType":  {"HOMEPAGE"},
+				"count":    {fmt.Sprintf("%d", opts.Limit)},
+				"start":    {fmt.Sprintf("%d", opts.Start)},
+				"q":        {"feedByType"},
+				"feedType": {"HOMEPAGE"},
 			},
 		},
 	}
@@ -372,10 +372,10 @@ func parseFeedItem(data json.RawMessage) (*FeedItem, error) {
 			} `json:"text"`
 		} `json:"commentary"`
 		SocialDetail struct {
-			URN          string `json:"urn"`
-			TotalLikes   int    `json:"totalSocialActivityCounts,omitempty"`
-			LikesCount   int    `json:"likes,omitempty"`
-			CommentsCount int   `json:"comments,omitempty"`
+			URN           string `json:"urn"`
+			TotalLikes    int    `json:"totalSocialActivityCounts,omitempty"`
+			LikesCount    int    `json:"likes,omitempty"`
+			CommentsCount int    `json:"comments,omitempty"`
 		} `json:"socialDetail"`
 		CreatedAt int64 `json:"createdAt"`
 	}
@@ -420,9 +420,9 @@ func (c *Client) CreatePost(ctx context.Context, text string) (*Post, error) {
 			"text":       text,
 			"attributes": []any{},
 		},
-		"origin":               "FEED",
+		"origin":                 "FEED",
 		"allowedCommentersScope": "ALL",
-		"postState":            "PUBLISHED",
+		"postState":              "PUBLISHED",
 	}
 
 	var result struct {
@@ -518,19 +518,19 @@ func parseSearchPeopleResults(included []json.RawMessage) ([]Profile, error) {
 
 	for _, raw := range included {
 		var entity struct {
-			Type             string `json:"$type"`
-			Title            *struct {
+			Type  string `json:"$type"`
+			Title *struct {
 				Text string `json:"text"`
 			} `json:"title"`
-			PrimarySubtitle  *struct {
+			PrimarySubtitle *struct {
 				Text string `json:"text"`
 			} `json:"primarySubtitle"`
 			SecondarySubtitle *struct {
 				Text string `json:"text"`
 			} `json:"secondarySubtitle"`
-			NavigationURL    string `json:"navigationUrl"`
-			TrackingURN      string `json:"trackingUrn"`
-			BadgeText        *struct {
+			NavigationURL string `json:"navigationUrl"`
+			TrackingURN   string `json:"trackingUrn"`
+			BadgeText     *struct {
 				Text string `json:"text"`
 			} `json:"badgeText"`
 		}
@@ -627,21 +627,21 @@ func parseSearchCompanyResults(included []json.RawMessage) ([]Company, error) {
 
 	for _, raw := range included {
 		var entity struct {
-			Type             string `json:"$type"`
-			Title            *struct {
+			Type  string `json:"$type"`
+			Title *struct {
 				Text string `json:"text"`
 			} `json:"title"`
-			PrimarySubtitle  *struct {
+			PrimarySubtitle *struct {
 				Text string `json:"text"`
 			} `json:"primarySubtitle"`
 			SecondarySubtitle *struct {
 				Text string `json:"text"`
 			} `json:"secondarySubtitle"`
-			Summary          *struct {
+			Summary *struct {
 				Text string `json:"text"`
 			} `json:"summary"`
-			NavigationURL    string `json:"navigationUrl"`
-			TrackingURN      string `json:"trackingUrn"`
+			NavigationURL string `json:"navigationUrl"`
+			TrackingURN   string `json:"trackingUrn"`
 		}
 
 		if err := json.Unmarshal(raw, &entity); err != nil {
@@ -816,13 +816,13 @@ func parseConversationsFromResponse(resp *VoyagerResponse) ([]Conversation, erro
 	var conversations []Conversation
 	for _, raw := range resp.Included {
 		var entity struct {
-			Type           string   `json:"$type"`
-			EntityURN      string   `json:"entityUrn"`
-			Read           bool     `json:"read"`
-			LastActivityAt int64    `json:"lastActivityAt"`
-			TotalEventCount int     `json:"totalEventCount"`
-			Participants   []string `json:"*participants"`
-			Events         []string `json:"*events"`
+			Type            string   `json:"$type"`
+			EntityURN       string   `json:"entityUrn"`
+			Read            bool     `json:"read"`
+			LastActivityAt  int64    `json:"lastActivityAt"`
+			TotalEventCount int      `json:"totalEventCount"`
+			Participants    []string `json:"*participants"`
+			Events          []string `json:"*events"`
 		}
 		if err := json.Unmarshal(raw, &entity); err != nil {
 			continue
@@ -967,7 +967,7 @@ func parseConversationWithMessages(resp *VoyagerResponse, conversationURN string
 }
 
 // SendMessage sends a message to a profile.
-func (c *Client) SendMessage(ctx context.Context, profileURN string, text string) (*Message, error) {
+func (c *Client) SendMessage(ctx context.Context, profileURN, text string) (*Message, error) {
 	// First, we need to get or create a conversation with this profile.
 	// LinkedIn requires creating a conversation first or using an existing one.
 
@@ -1004,7 +1004,7 @@ func (c *Client) SendMessage(ctx context.Context, profileURN string, text string
 }
 
 // SendMessageToConversation sends a message to an existing conversation.
-func (c *Client) SendMessageToConversation(ctx context.Context, conversationURN string, text string) (*Message, error) {
+func (c *Client) SendMessageToConversation(ctx context.Context, conversationURN, text string) (*Message, error) {
 	// URL encode the URN.
 	encodedURN := url.PathEscape(conversationURN)
 
@@ -1013,7 +1013,7 @@ func (c *Client) SendMessageToConversation(ctx context.Context, conversationURN 
 		"eventCreate": map[string]any{
 			"value": map[string]any{
 				"com.linkedin.voyager.messaging.create.MessageCreate": map[string]any{
-					"body": text,
+					"body":        text,
 					"attachments": []any{},
 				},
 			},

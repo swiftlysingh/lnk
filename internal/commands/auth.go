@@ -16,10 +16,10 @@ import (
 )
 
 var (
-	authBrowser   string
-	authEmail     string
-	authPassword  string
-	authLiAt      string
+	authBrowser    string
+	authEmail      string
+	authPassword   string
+	authLiAt       string
 	authJSessionID string
 )
 

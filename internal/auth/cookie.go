@@ -28,6 +28,14 @@ const (
 	BrowserHelium   Browser = "helium"
 	BrowserOpera    Browser = "opera"
 	BrowserVivaldi  Browser = "vivaldi"
+
+	// Cookie name constants.
+	cookieLiAt       = "li_at"
+	cookieJSessionID = "JSESSIONID"
+
+	// OS constants.
+	osDarwin = "darwin"
+	osLinux  = "linux"
 )
 
 // Cookie represents a browser cookie.
@@ -43,7 +51,7 @@ type Cookie struct {
 
 // SupportedBrowsers returns browsers supported on the current platform.
 func SupportedBrowsers() []Browser {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == osDarwin {
 		return []Browser{
 			BrowserSafari, BrowserChrome, BrowserFirefox, BrowserBrave,
 			BrowserArc, BrowserEdge, BrowserHelium, BrowserOpera, BrowserVivaldi,
@@ -73,20 +81,20 @@ func ExtractLinkedInCookies(browser Browser) (*api.Credentials, error) {
 
 	switch browser {
 	case BrowserSafari:
-		if runtime.GOOS != "darwin" {
+		if runtime.GOOS != osDarwin {
 			return nil, errors.New("Safari is only available on macOS")
 		}
 		cookies, err = extractSafariCookies()
 
 	case BrowserFirefox:
-		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if runtime.GOOS != osDarwin && runtime.GOOS != osLinux {
 			return nil, fmt.Errorf("Firefox cookie extraction not supported on %s", runtime.GOOS)
 		}
 		cookies, err = extractFirefoxCookies()
 
 	case BrowserChrome, BrowserChromium, BrowserBrave, BrowserEdge,
 		BrowserArc, BrowserHelium, BrowserOpera, BrowserVivaldi:
-		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if runtime.GOOS != osDarwin && runtime.GOOS != osLinux {
 			return nil, fmt.Errorf("%s cookie extraction not supported on %s", browser, runtime.GOOS)
 		}
 		cookies, err = extractChromiumCookies(browser)
@@ -108,12 +116,12 @@ func cookiesToCredentials(cookies []Cookie) (*api.Credentials, error) {
 
 	for _, c := range cookies {
 		switch c.Name {
-		case "li_at":
+		case cookieLiAt:
 			creds.LiAt = c.Value
 			if !c.ExpiresAt.IsZero() {
 				creds.ExpiresAt = c.ExpiresAt
 			}
-		case "JSESSIONID":
+		case cookieJSessionID:
 			creds.JSessID = c.Value
 			// Extract CSRF token from JSESSIONID (remove quotes).
 			creds.CSRFToken = strings.Trim(c.Value, `"`)
@@ -121,10 +129,10 @@ func cookiesToCredentials(cookies []Cookie) (*api.Credentials, error) {
 	}
 
 	if creds.LiAt == "" {
-		return nil, errors.New("li_at cookie not found. Make sure you're logged into LinkedIn in your browser")
+		return nil, errors.New(cookieLiAt + " cookie not found. Make sure you're logged into LinkedIn in your browser")
 	}
 	if creds.JSessID == "" {
-		return nil, errors.New("JSESSIONID cookie not found. Make sure you're logged into LinkedIn in your browser")
+		return nil, errors.New(cookieJSessionID + " cookie not found. Make sure you're logged into LinkedIn in your browser")
 	}
 
 	return creds, nil
@@ -217,16 +225,16 @@ func parseCookiePage(data []byte, domainFilter string) ([]Cookie, error) {
 
 	// Page header: 4 bytes (should be 0x00000100).
 	var pageHeader uint32
-	binary.Read(reader, binary.LittleEndian, &pageHeader)
+	_ = binary.Read(reader, binary.LittleEndian, &pageHeader)
 
 	// Number of cookies in page.
 	var numCookies uint32
-	binary.Read(reader, binary.LittleEndian, &numCookies)
+	_ = binary.Read(reader, binary.LittleEndian, &numCookies)
 
 	// Read cookie offsets.
 	offsets := make([]uint32, numCookies)
 	for i := uint32(0); i < numCookies; i++ {
-		binary.Read(reader, binary.LittleEndian, &offsets[i])
+		_ = binary.Read(reader, binary.LittleEndian, &offsets[i])
 	}
 
 	var cookies []Cookie
@@ -259,38 +267,38 @@ func parseCookie(data []byte, domainFilter string) (*Cookie, error) {
 
 	// Cookie size.
 	var cookieSize uint32
-	binary.Read(reader, binary.LittleEndian, &cookieSize)
+	_ = binary.Read(reader, binary.LittleEndian, &cookieSize)
 
 	// Unknown field.
 	var unknown1 uint32
-	binary.Read(reader, binary.LittleEndian, &unknown1)
+	_ = binary.Read(reader, binary.LittleEndian, &unknown1)
 
 	// Flags.
 	var flags uint32
-	binary.Read(reader, binary.LittleEndian, &flags)
+	_ = binary.Read(reader, binary.LittleEndian, &flags)
 
 	// Unknown field.
 	var unknown2 uint32
-	binary.Read(reader, binary.LittleEndian, &unknown2)
+	_ = binary.Read(reader, binary.LittleEndian, &unknown2)
 
 	// Offsets to strings.
 	var domainOffset, nameOffset, pathOffset, valueOffset uint32
-	binary.Read(reader, binary.LittleEndian, &domainOffset)
-	binary.Read(reader, binary.LittleEndian, &nameOffset)
-	binary.Read(reader, binary.LittleEndian, &pathOffset)
-	binary.Read(reader, binary.LittleEndian, &valueOffset)
+	_ = binary.Read(reader, binary.LittleEndian, &domainOffset)
+	_ = binary.Read(reader, binary.LittleEndian, &nameOffset)
+	_ = binary.Read(reader, binary.LittleEndian, &pathOffset)
+	_ = binary.Read(reader, binary.LittleEndian, &valueOffset)
 
 	// End of cookie (8 bytes).
 	var endHeader uint64
-	binary.Read(reader, binary.LittleEndian, &endHeader)
+	_ = binary.Read(reader, binary.LittleEndian, &endHeader)
 
 	// Expiration date (Mac absolute time - seconds since 2001-01-01).
 	var expiration float64
-	binary.Read(reader, binary.LittleEndian, &expiration)
+	_ = binary.Read(reader, binary.LittleEndian, &expiration)
 
 	// Creation date.
 	var creation float64
-	binary.Read(reader, binary.LittleEndian, &creation)
+	_ = binary.Read(reader, binary.LittleEndian, &creation)
 
 	// Read strings.
 	domain := readNullTerminatedString(data, domainOffset)
@@ -369,9 +377,9 @@ func parseCookieString(s string) (*api.Credentials, error) {
 			value := strings.TrimSpace(part[idx+1:])
 
 			switch name {
-			case "li_at":
+			case cookieLiAt:
 				creds.LiAt = value
-			case "JSESSIONID":
+			case cookieJSessionID:
 				creds.JSessID = value
 				creds.CSRFToken = strings.Trim(value, `"`)
 			}
@@ -379,7 +387,7 @@ func parseCookieString(s string) (*api.Credentials, error) {
 	}
 
 	if creds.LiAt == "" || creds.JSessID == "" {
-		return nil, errors.New("invalid cookie string: missing li_at or JSESSIONID")
+		return nil, errors.New("invalid cookie string: missing " + cookieLiAt + " or " + cookieJSessionID)
 	}
 
 	return creds, nil

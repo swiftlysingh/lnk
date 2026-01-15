@@ -12,9 +12,9 @@ import (
 // DetectDefaultBrowser attempts to detect the user's default browser.
 func DetectDefaultBrowser() (Browser, error) {
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		return detectDefaultBrowserMacOS()
-	case "linux":
+	case osLinux:
 		return detectDefaultBrowserLinux()
 	default:
 		return "", fmt.Errorf("browser detection not supported on %s", runtime.GOOS)

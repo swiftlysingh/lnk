@@ -49,7 +49,7 @@ func getConfigDir() (string, error) {
 // Save stores credentials to disk.
 func (s *Store) Save(creds *api.Credentials) error {
 	// Ensure config directory exists.
-	if err := os.MkdirAll(s.configDir, 0700); err != nil {
+	if err := os.MkdirAll(s.configDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -61,7 +61,7 @@ func (s *Store) Save(creds *api.Credentials) error {
 
 	// Write to file with restricted permissions.
 	credPath := filepath.Join(s.configDir, CredentialsFile)
-	if err := os.WriteFile(credPath, data, 0600); err != nil {
+	if err := os.WriteFile(credPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}
 

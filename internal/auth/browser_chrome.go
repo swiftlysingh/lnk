@@ -3,9 +3,8 @@ package auth
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // Required for Chrome's PBKDF2 implementation
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,9 +19,9 @@ import (
 
 // chromiumBrowserConfig holds configuration for a Chromium-based browser.
 type chromiumBrowserConfig struct {
-	name           string
-	macOSPath      string
-	linuxPath      string
+	name            string
+	macOSPath       string
+	linuxPath       string
 	keychainService string
 	keychainAccount string
 }
@@ -66,7 +65,7 @@ func getChromiumConfig(browser Browser) chromiumBrowserConfig {
 		return chromiumBrowserConfig{
 			name:            "Arc",
 			macOSPath:       "Arc",
-			linuxPath:       "",  // Arc is macOS only
+			linuxPath:       "", // Arc is macOS only
 			keychainService: "Arc Safe Storage",
 			keychainAccount: "Arc",
 		}
@@ -109,7 +108,7 @@ func getChromiumConfig(browser Browser) chromiumBrowserConfig {
 func extractChromiumCookies(browser Browser) ([]Cookie, error) {
 	config := getChromiumConfig(browser)
 
-	cookiePath, err := findChromiumCookiesPath(config)
+	cookiePath, err := findChromiumCookiesPath(&config)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +121,7 @@ func extractChromiumCookies(browser Browser) ([]Cookie, error) {
 	defer os.Remove(tmpFile)
 
 	// Get decryption key.
-	key, err := getChromiumDecryptionKey(config)
+	key, err := getChromiumDecryptionKey(&config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %s decryption key: %w", config.name, err)
 	}
@@ -131,7 +130,7 @@ func extractChromiumCookies(browser Browser) ([]Cookie, error) {
 }
 
 // findChromiumCookiesPath locates the cookies database for a Chromium-based browser.
-func findChromiumCookiesPath(config chromiumBrowserConfig) (string, error) {
+func findChromiumCookiesPath(config *chromiumBrowserConfig) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -140,9 +139,9 @@ func findChromiumCookiesPath(config chromiumBrowserConfig) (string, error) {
 	var basePath string
 
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		basePath = filepath.Join(home, "Library", "Application Support", config.macOSPath)
-	case "linux":
+	case osLinux:
 		if config.linuxPath == "" {
 			return "", fmt.Errorf("%s is not available on Linux", config.name)
 		}
@@ -172,11 +171,11 @@ func findChromiumCookiesPath(config chromiumBrowserConfig) (string, error) {
 }
 
 // getChromiumDecryptionKey retrieves the key used to decrypt cookies.
-func getChromiumDecryptionKey(config chromiumBrowserConfig) ([]byte, error) {
+func getChromiumDecryptionKey(config *chromiumBrowserConfig) ([]byte, error) {
 	switch runtime.GOOS {
-	case "darwin":
+	case osDarwin:
 		return getChromiumKeyMacOS(config)
-	case "linux":
+	case osLinux:
 		return getChromiumKeyLinux(config)
 	default:
 		return nil, fmt.Errorf("decryption not supported on %s", runtime.GOOS)
@@ -184,7 +183,7 @@ func getChromiumDecryptionKey(config chromiumBrowserConfig) ([]byte, error) {
 }
 
 // getChromiumKeyMacOS retrieves the encryption key from macOS Keychain.
-func getChromiumKeyMacOS(config chromiumBrowserConfig) ([]byte, error) {
+func getChromiumKeyMacOS(config *chromiumBrowserConfig) ([]byte, error) {
 	// Use security command to get the key from Keychain.
 	cmd := exec.Command("security", "find-generic-password",
 		"-w", // Print password only
@@ -207,7 +206,7 @@ func getChromiumKeyMacOS(config chromiumBrowserConfig) ([]byte, error) {
 }
 
 // getChromiumKeyLinux retrieves the encryption key on Linux.
-func getChromiumKeyLinux(config chromiumBrowserConfig) ([]byte, error) {
+func getChromiumKeyLinux(config *chromiumBrowserConfig) ([]byte, error) {
 	// On Linux, try GNOME Keyring first, then fallback to hardcoded key.
 	cmd := exec.Command("secret-tool", "lookup",
 		"application", strings.ToLower(config.name),
@@ -288,151 +287,24 @@ func readChromiumCookies(dbPath string, key []byte, browserName string) ([]Cooki
 	return cookies, nil
 }
 
-// Legacy function for backwards compatibility.
-func extractChromeCookies() ([]Cookie, error) {
-	return extractChromiumCookies(BrowserChrome)
-}
-
-// getChromeDecryptionKey retrieves the key used to decrypt Chrome cookies.
-func getChromeDecryptionKey() ([]byte, error) {
-	switch runtime.GOOS {
-	case "darwin":
-		return getChromeKeyMacOS()
-	case "linux":
-		return getChromeKeyLinux()
-	default:
-		return nil, fmt.Errorf("Chrome decryption not supported on %s", runtime.GOOS)
-	}
-}
-
-// getChromeKeyMacOS retrieves the Chrome encryption key from macOS Keychain.
-func getChromeKeyMacOS() ([]byte, error) {
-	// Use security command to get the key from Keychain.
-	cmd := exec.Command("security", "find-generic-password",
-		"-w", // Print password only
-		"-s", "Chrome Safe Storage",
-		"-a", "Chrome",
-	)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get Chrome key from Keychain: %w. Make sure Chrome has stored its key in Keychain", err)
-	}
-
-	password := strings.TrimSpace(string(output))
-
-	// Derive key using PBKDF2.
-	salt := []byte("saltysalt")
-	key := pbkdf2.Key([]byte(password), salt, 1003, 16, sha1.New)
-
-	return key, nil
-}
-
-// getChromeKeyLinux retrieves the Chrome encryption key on Linux.
-func getChromeKeyLinux() ([]byte, error) {
-	// On Linux, Chrome uses either:
-	// 1. GNOME Keyring (if available)
-	// 2. A hardcoded key "peanuts"
-
-	// Try to get from GNOME Keyring first using secret-tool.
-	cmd := exec.Command("secret-tool", "lookup",
-		"application", "chrome",
-	)
-
-	output, err := cmd.Output()
-	if err == nil && len(output) > 0 {
-		password := strings.TrimSpace(string(output))
-		salt := []byte("saltysalt")
-		key := pbkdf2.Key([]byte(password), salt, 1, 16, sha1.New)
-		return key, nil
-	}
-
-	// Fallback to hardcoded key.
-	salt := []byte("saltysalt")
-	key := pbkdf2.Key([]byte("peanuts"), salt, 1, 16, sha1.New)
-
-	return key, nil
-}
-
-// readChromeCookies reads and decrypts cookies from a Chrome cookies database.
-func readChromeCookies(dbPath string, key []byte) ([]Cookie, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open cookies database: %w", err)
-	}
-	defer db.Close()
-
-	// Query LinkedIn cookies.
-	query := `
-		SELECT name, encrypted_value, host_key, path, expires_utc, is_secure, is_httponly
-		FROM cookies
-		WHERE host_key LIKE '%linkedin.com'
-	`
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query cookies: %w", err)
-	}
-	defer rows.Close()
-
-	var cookies []Cookie
-	for rows.Next() {
-		var name, host, path string
-		var encryptedValue []byte
-		var expiresUTC int64
-		var isSecure, isHTTPOnly int
-
-		if err := rows.Scan(&name, &encryptedValue, &host, &path, &expiresUTC, &isSecure, &isHTTPOnly); err != nil {
-			continue
-		}
-
-		// Decrypt cookie value.
-		value, err := decryptChromeCookie(encryptedValue, key)
-		if err != nil {
-			// Try unencrypted value.
-			value = string(encryptedValue)
-		}
-
-		// Chrome stores time as microseconds since 1601-01-01.
-		// Convert to Unix timestamp.
-		expiresAt := chromeTimeToUnix(expiresUTC)
-
-		cookies = append(cookies, Cookie{
-			Domain:     host,
-			Name:       name,
-			Value:      value,
-			Path:       path,
-			ExpiresAt:  expiresAt,
-			IsSecure:   isSecure == 1,
-			IsHTTPOnly: isHTTPOnly == 1,
-		})
-	}
-
-	if len(cookies) == 0 {
-		return nil, fmt.Errorf("no LinkedIn cookies found in Chrome. Make sure you're logged into LinkedIn")
-	}
-
-	return cookies, nil
-}
-
 // decryptChromeCookie decrypts a Chrome cookie value.
-func decryptChromeCookie(encrypted []byte, key []byte) (string, error) {
+func decryptChromeCookie(encrypted, key []byte) (string, error) {
 	if len(encrypted) == 0 {
 		return "", nil
 	}
 
 	// Check for encryption version prefix.
-	if runtime.GOOS == "darwin" && len(encrypted) > 3 && string(encrypted[:3]) == "v10" {
+	if runtime.GOOS == osDarwin && len(encrypted) > 3 && string(encrypted[:3]) == "v10" {
 		// v10 encryption (AES-128-CBC).
 		return decryptV10Cookie(encrypted[3:], key)
 	}
 
-	if runtime.GOOS == "linux" && len(encrypted) > 3 && string(encrypted[:3]) == "v11" {
+	if runtime.GOOS == osLinux && len(encrypted) > 3 && string(encrypted[:3]) == "v11" {
 		// v11 encryption (AES-128-CBC).
 		return decryptV10Cookie(encrypted[3:], key)
 	}
 
-	if runtime.GOOS == "linux" && len(encrypted) > 3 && string(encrypted[:3]) == "v10" {
+	if runtime.GOOS == osLinux && len(encrypted) > 3 && string(encrypted[:3]) == "v10" {
 		return decryptV10Cookie(encrypted[3:], key)
 	}
 
@@ -441,7 +313,7 @@ func decryptChromeCookie(encrypted []byte, key []byte) (string, error) {
 }
 
 // decryptV10Cookie decrypts a v10 encrypted cookie using AES-128-CBC.
-func decryptV10Cookie(encrypted []byte, key []byte) (string, error) {
+func decryptV10Cookie(encrypted, key []byte) (string, error) {
 	if len(encrypted) < aes.BlockSize {
 		return "", fmt.Errorf("encrypted data too short")
 	}
@@ -498,9 +370,4 @@ func chromeTimeToUnix(chromeTime int64) time.Time {
 	const epochDiff = 11644473600000000
 	unixMicro := chromeTime - epochDiff
 	return time.Unix(unixMicro/1000000, (unixMicro%1000000)*1000)
-}
-
-// decodeBase64 is a helper for base64 decoding.
-func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
 }

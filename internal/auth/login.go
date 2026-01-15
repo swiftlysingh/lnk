@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,10 +15,10 @@ import (
 )
 
 const (
-	linkedInBaseURL  = "https://www.linkedin.com"
-	loginPageURL     = "https://www.linkedin.com/login"
-	loginSubmitURL   = "https://www.linkedin.com/checkpoint/lg/login-submit"
-	userAgent        = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	linkedInBaseURL = "https://www.linkedin.com"
+	loginPageURL    = "https://www.linkedin.com/login"
+	loginSubmitURL  = "https://www.linkedin.com/checkpoint/lg/login-submit"
+	userAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 // LoginWithCredentials authenticates with LinkedIn using email and password.
@@ -54,7 +55,8 @@ func LoginWithCredentials(email, password string) (*api.Credentials, error) {
 
 // getLoginTokens fetches the login page and extracts CSRF tokens.
 func getLoginTokens(client *http.Client) (csrfToken, loginCsrf string, err error) {
-	req, err := http.NewRequest("GET", loginPageURL, nil)
+	ctx := context.Background()
+	req, err := http.NewRequestWithContext(ctx, "GET", loginPageURL, http.NoBody)
 	if err != nil {
 		return "", "", err
 	}
@@ -67,25 +69,26 @@ func getLoginTokens(client *http.Client) (csrfToken, loginCsrf string, err error
 	if err != nil {
 		return "", "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	// Follow redirects manually if needed.
 	for resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		location := resp.Header.Get("Location")
 		if location == "" {
+			resp.Body.Close()
 			break
 		}
 		if !strings.HasPrefix(location, "http") {
 			location = linkedInBaseURL + location
 		}
-		req, _ = http.NewRequest("GET", location, nil)
+		resp.Body.Close()
+		req, _ = http.NewRequestWithContext(ctx, "GET", location, http.NoBody)
 		req.Header.Set("User-Agent", userAgent)
 		resp, err = client.Do(req)
 		if err != nil {
 			return "", "", err
 		}
-		defer resp.Body.Close()
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
@@ -117,6 +120,8 @@ func getLoginTokens(client *http.Client) (csrfToken, loginCsrf string, err error
 
 // submitLogin submits the login form with credentials.
 func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf string) (*api.Credentials, error) {
+	ctx := context.Background()
+
 	// Prepare form data.
 	formData := url.Values{}
 	formData.Set("csrfToken", csrfToken)
@@ -124,7 +129,7 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 	formData.Set("session_password", password)
 	formData.Set("loginCsrfParam", loginCsrf)
 
-	req, err := http.NewRequest("POST", loginSubmitURL, strings.NewReader(formData.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", loginSubmitURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +144,6 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 	if err != nil {
 		return nil, fmt.Errorf("login request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	// Check for successful login by looking for li_at cookie.
 	linkedInURL, _ := url.Parse(linkedInBaseURL)
@@ -149,16 +153,19 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 	for i := 0; i < maxRedirects && (resp.StatusCode >= 300 && resp.StatusCode < 400); i++ {
 		location := resp.Header.Get("Location")
 		if location == "" {
+			resp.Body.Close()
 			break
 		}
 
 		// Check if redirecting to challenge page (wrong password, 2FA, captcha).
 		if strings.Contains(location, "/checkpoint/challenge") {
+			resp.Body.Close()
 			return nil, fmt.Errorf("login failed: LinkedIn requires verification (wrong password, 2FA, or captcha). Use cookie authentication instead")
 		}
 
 		// Check if redirecting to security verification.
 		if strings.Contains(location, "security-verification") {
+			resp.Body.Close()
 			return nil, fmt.Errorf("login failed: security verification required. Use cookie authentication instead")
 		}
 
@@ -167,7 +174,8 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 			location = linkedInBaseURL + location
 		}
 
-		req, _ = http.NewRequest("GET", location, nil)
+		resp.Body.Close()
+		req, _ = http.NewRequestWithContext(ctx, "GET", location, http.NoBody)
 		req.Header.Set("User-Agent", userAgent)
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
@@ -175,20 +183,20 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 		if err != nil {
 			return nil, fmt.Errorf("redirect failed: %w", err)
 		}
-		defer resp.Body.Close()
 	}
+	defer resp.Body.Close()
 
 	// Extract credentials from cookies.
 	creds := &api.Credentials{}
 
 	for _, cookie := range client.Jar.Cookies(linkedInURL) {
 		switch cookie.Name {
-		case "li_at":
+		case cookieLiAt:
 			creds.LiAt = cookie.Value
 			if !cookie.Expires.IsZero() {
 				creds.ExpiresAt = cookie.Expires
 			}
-		case "JSESSIONID":
+		case cookieJSessionID:
 			creds.JSessID = cookie.Value
 			creds.CSRFToken = strings.Trim(cookie.Value, `"`)
 		}
@@ -198,14 +206,14 @@ func submitLogin(client *http.Client, email, password, csrfToken, loginCsrf stri
 	wwwURL, _ := url.Parse("https://www.linkedin.com")
 	for _, cookie := range client.Jar.Cookies(wwwURL) {
 		switch cookie.Name {
-		case "li_at":
+		case cookieLiAt:
 			if creds.LiAt == "" {
 				creds.LiAt = cookie.Value
 				if !cookie.Expires.IsZero() {
 					creds.ExpiresAt = cookie.Expires
 				}
 			}
-		case "JSESSIONID":
+		case cookieJSessionID:
 			if creds.JSessID == "" {
 				creds.JSessID = cookie.Value
 				creds.CSRFToken = strings.Trim(cookie.Value, `"`)
