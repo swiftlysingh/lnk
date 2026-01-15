@@ -22,6 +22,7 @@ func NewPostCmd() *cobra.Command {
 
 	cmd.AddCommand(newPostCreateCmd())
 	cmd.AddCommand(newPostGetCmd())
+	cmd.AddCommand(newPostDeleteCmd())
 
 	return cmd
 }
@@ -141,5 +142,44 @@ func runPostGet(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Likes: %d, Comments: %d\n", post.LikeCount, post.CommentCount)
 	}
 
+	return nil
+}
+
+func newPostDeleteCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <urn>",
+		Short: "Delete a post by URN",
+		Long: `Delete a LinkedIn post by its URN.
+
+Example:
+  lnk post delete "urn:li:share:123456789"`,
+		Args: cobra.ExactArgs(1),
+		RunE: runPostDelete,
+	}
+}
+
+func runPostDelete(cmd *cobra.Command, args []string) error {
+	jsonOutput, _ := cmd.Flags().GetBool("json")
+	ctx := context.Background()
+
+	urn := args[0]
+
+	client, err := getAuthenticatedClient()
+	if err != nil {
+		return outputError(jsonOutput, api.ErrCodeAuthRequired, err.Error())
+	}
+
+	if err := client.DeletePost(ctx, urn); err != nil {
+		return handleAPIError(jsonOutput, err)
+	}
+
+	if jsonOutput {
+		return outputJSON(map[string]any{
+			"success": true,
+			"message": "Post deleted successfully",
+		})
+	}
+
+	fmt.Println("Post deleted successfully.")
 	return nil
 }

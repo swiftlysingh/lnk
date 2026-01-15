@@ -51,4 +51,6 @@ func init() {
 	rootCmd.AddCommand(commands.NewProfileCmd())
 	rootCmd.AddCommand(commands.NewFeedCmd())
 	rootCmd.AddCommand(commands.NewPostCmd())
+	rootCmd.AddCommand(commands.NewSearchCmd())
+	rootCmd.AddCommand(commands.NewMessagesCmd())
 }

@@ -2,20 +2,25 @@
 package commands
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	"github.com/pp/lnk/internal/api"
 	"github.com/pp/lnk/internal/auth"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
-	authBrowser  string
-	authEmail    string
-	authPassword string
+	authBrowser   string
+	authEmail     string
+	authPassword  string
+	authLiAt      string
+	authJSessionID string
 )
 
 // NewAuthCmd creates the auth command group.
@@ -37,32 +42,33 @@ func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with LinkedIn",
-		Long: `Authenticate with LinkedIn using browser cookies.
+		Long: `Authenticate with LinkedIn.
 
-Auto-detect default browser (recommended):
-  lnk auth login
+Email/Password (interactive):
+  lnk auth login --email user@example.com
+  (You will be prompted for your password securely)
 
-Specify browser manually:
+Direct cookie entry:
+  lnk auth login --li-at "YOUR_LI_AT" --jsessionid "YOUR_JSESSIONID"
+
+Browser cookie extraction:
   lnk auth login --browser safari
   lnk auth login --browser chrome
-  lnk auth login --browser helium
-  lnk auth login --browser brave
-  lnk auth login --browser arc
 
 Environment variables:
   Set LNK_LI_AT and LNK_JSESSIONID, then run:
   lnk auth login --env
 
-Supported browsers: safari, chrome, chromium, firefox, brave, edge, arc, helium, opera, vivaldi
-
-Note: Browser cookie extraction may require granting Full Disk Access
-to your terminal application in System Preferences > Privacy & Security.`,
+Note: Email/password auth may fail if you have 2FA enabled or if
+LinkedIn requires captcha verification. In that case, use cookie auth.`,
 		RunE: runAuthLogin,
 	}
 
-	cmd.Flags().StringVarP(&authBrowser, "browser", "b", "", "Browser to extract cookies from (auto-detected if not specified)")
-	cmd.Flags().StringVarP(&authEmail, "email", "e", "", "LinkedIn email (for password auth)")
-	cmd.Flags().StringVarP(&authPassword, "password", "p", "", "LinkedIn password (for password auth)")
+	cmd.Flags().StringVarP(&authEmail, "email", "e", "", "LinkedIn email address")
+	cmd.Flags().StringVarP(&authPassword, "password", "p", "", "LinkedIn password (will prompt if not provided)")
+	cmd.Flags().StringVar(&authLiAt, "li-at", "", "LinkedIn li_at cookie value")
+	cmd.Flags().StringVar(&authJSessionID, "jsessionid", "", "LinkedIn JSESSIONID cookie value")
+	cmd.Flags().StringVarP(&authBrowser, "browser", "b", "", "Browser to extract cookies from")
 	cmd.Flags().Bool("env", false, "Use environment variables for authentication")
 
 	return cmd
@@ -77,24 +83,61 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	var browserUsed auth.Browser
 
 	switch {
+	case authEmail != "":
+		// Email/password authentication.
+		password := authPassword
+		if password == "" {
+			// Prompt for password securely.
+			if jsonOutput {
+				return outputError(jsonOutput, "PASSWORD_REQUIRED", "password required for email auth in JSON mode. Use --password flag")
+			}
+			password, err = promptPassword("Password: ")
+			if err != nil {
+				return outputError(jsonOutput, "INPUT_ERROR", fmt.Sprintf("failed to read password: %v", err))
+			}
+		}
+		if !jsonOutput {
+			fmt.Println("Authenticating with LinkedIn...")
+		}
+		creds, err = auth.LoginWithCredentials(authEmail, password)
+
+	case authLiAt != "" && authJSessionID != "":
+		// Direct cookie entry via flags.
+		creds = &api.Credentials{
+			LiAt:      authLiAt,
+			JSessID:   authJSessionID,
+			CSRFToken: strings.Trim(authJSessionID, `"`),
+		}
+
 	case useEnv:
 		creds, err = auth.FromEnvironment()
+
 	case authBrowser != "":
 		browserUsed = auth.Browser(strings.ToLower(authBrowser))
 		creds, err = auth.ExtractLinkedInCookies(browserUsed)
-	case authEmail != "" && authPassword != "":
-		err = fmt.Errorf("username/password authentication not yet implemented")
+
 	default:
-		// Auto-detect default browser.
-		browserUsed, err = auth.DetectDefaultBrowser()
+		// No auth method specified - prompt for email interactively.
+		if jsonOutput {
+			return outputError(jsonOutput, "AUTH_METHOD_REQUIRED",
+				"specify auth method: --email, --li-at/--jsessionid, --browser, or --env")
+		}
+
+		email, err := promptInput("Email: ")
 		if err != nil {
-			return outputError(jsonOutput, "BROWSER_DETECT_FAILED",
-				fmt.Sprintf("could not detect default browser: %v. Use --browser to specify manually", err))
+			return outputError(jsonOutput, "INPUT_ERROR", fmt.Sprintf("failed to read email: %v", err))
 		}
-		if !jsonOutput {
-			fmt.Printf("Detected browser: %s\n", browserUsed)
+
+		password, err := promptPassword("Password: ")
+		if err != nil {
+			return outputError(jsonOutput, "INPUT_ERROR", fmt.Sprintf("failed to read password: %v", err))
 		}
-		creds, err = auth.ExtractLinkedInCookies(browserUsed)
+
+		fmt.Println("Authenticating with LinkedIn...")
+		creds, err = auth.LoginWithCredentials(email, password)
+		if err != nil {
+			return outputError(jsonOutput, "LOGIN_FAILED", err.Error())
+		}
 	}
 
 	if err != nil {
@@ -256,4 +299,26 @@ func outputError(jsonOutput bool, code, message string) error {
 		os.Exit(1)
 	}
 	return fmt.Errorf("%s", message)
+}
+
+// promptInput prompts the user for text input.
+func promptInput(prompt string) (string, error) {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(input), nil
+}
+
+// promptPassword prompts the user for password input without echoing.
+func promptPassword(prompt string) (string, error) {
+	fmt.Print(prompt)
+	password, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println() // Print newline after password input.
+	if err != nil {
+		return "", err
+	}
+	return string(password), nil
 }

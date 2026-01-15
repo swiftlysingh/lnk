@@ -1,14 +1,15 @@
 # lnk
 
-> A fast LinkedIn CLI for posting, reading, and messaging via LinkedIn's Voyager API.
+> A fast LinkedIn CLI for posting, reading, searching, and messaging via LinkedIn's Voyager API.
 
 Inspired by [bird](https://github.com/steipete/bird) for X/Twitter.
 
 ## Features
 
-- **Posts**: Create and read posts
-- **Feed**: Read your LinkedIn feed
+- **Posts**: Create, read, and delete posts
 - **Profiles**: View profiles by username or URN
+- **Search**: Search for people and companies
+- **Messaging**: View conversations and send messages
 - **Agent-Friendly**: JSON output mode for AI agent integration
 - **Cross-Platform**: Works on macOS and Linux
 
@@ -28,77 +29,67 @@ go build -o lnk ./cmd/lnk
 go install github.com/pp/lnk/cmd/lnk@latest
 ```
 
-### Homebrew (Coming Soon)
-
-```bash
-brew tap pp/tap
-brew install lnk
-```
-
 ## Quick Start
 
 ```bash
-# 1. Authenticate (auto-detects your default browser)
-lnk auth login
+# 1. Authenticate with email/password
+lnk auth login -e your@email.com
 
-# 2. Check auth status
+# 2. Or authenticate with browser cookies
+lnk auth login --browser safari
+
+# 3. Check auth status
 lnk auth status
 
-# 3. View your profile
+# 4. View your profile
 lnk profile me
-
-# 4. Read your feed
-lnk feed --limit 10
 
 # 5. Create a post
 lnk post create "Hello LinkedIn!"
+
+# 6. Search for people
+lnk search people "software engineer"
 ```
 
 ## Authentication
 
-lnk auto-detects your default browser and extracts LinkedIn cookies.
-
-### Auto-Detect (Recommended)
+### Email/Password (Recommended)
 
 ```bash
-lnk auth login
+lnk auth login -e your@email.com
+# You'll be prompted for your password securely
 ```
 
-This will automatically detect and use your default browser (Safari, Chrome, Helium, Brave, Arc, Firefox, etc.).
+Or provide password directly:
+```bash
+lnk auth login -e your@email.com -p "yourpassword"
+```
 
-### Specify Browser Manually
+### Browser Cookies
 
 ```bash
 lnk auth login --browser safari   # macOS only
 lnk auth login --browser chrome   # macOS/Linux
-lnk auth login --browser helium   # macOS
+lnk auth login --browser firefox  # macOS/Linux
 lnk auth login --browser brave    # macOS/Linux
 lnk auth login --browser arc      # macOS
-lnk auth login --browser firefox  # macOS/Linux
 ```
 
 **Note**: May require granting Full Disk Access to your terminal application in System Preferences > Privacy & Security.
 
+### Direct Cookie Input
+
+```bash
+lnk auth login --li-at "your-li_at-cookie" --jsessionid "your-jsessionid-cookie"
+```
+
 ### Environment Variables
 
 ```bash
-# Set cookies as environment variables
 export LNK_LI_AT="your-li_at-cookie"
 export LNK_JSESSIONID="your-jsessionid-cookie"
-
-# Or use combined format
-export LNK_COOKIES="li_at=xxx; JSESSIONID=yyy"
-
-# Then login
 lnk auth login --env
 ```
-
-### Getting Cookies Manually
-
-1. Open LinkedIn in your browser and log in
-2. Open Developer Tools (F12)
-3. Go to Application > Cookies > linkedin.com
-4. Copy the values of `li_at` and `JSESSIONID`
 
 ## Commands Reference
 
@@ -106,8 +97,8 @@ lnk auth login --env
 
 | Command | Description |
 |---------|-------------|
+| `lnk auth login -e <email>` | Authenticate with email/password |
 | `lnk auth login --browser <name>` | Authenticate using browser cookies |
-| `lnk auth login --env` | Authenticate using environment variables |
 | `lnk auth status` | Check authentication status |
 | `lnk auth logout` | Clear stored credentials |
 
@@ -119,13 +110,6 @@ lnk auth login --env
 | `lnk profile get <username>` | View a profile by username |
 | `lnk profile get --urn <urn>` | View a profile by URN |
 
-### Feed
-
-| Command | Description |
-|---------|-------------|
-| `lnk feed` | Read your feed (default 10 items) |
-| `lnk feed --limit 20` | Read more feed items |
-
 ### Posts
 
 | Command | Description |
@@ -133,6 +117,33 @@ lnk auth login --env
 | `lnk post create <text>` | Create a new post |
 | `lnk post create --file post.txt` | Create post from file |
 | `lnk post get <urn>` | Read a post by URN |
+| `lnk post delete <urn>` | Delete a post by URN |
+
+### Search
+
+| Command | Description |
+|---------|-------------|
+| `lnk search people <query>` | Search for people |
+| `lnk search companies <query>` | Search for companies |
+| `lnk search people <query> --limit 20` | Limit results |
+
+### Messaging
+
+| Command | Description |
+|---------|-------------|
+| `lnk messages list` | List conversations |
+| `lnk messages get <conversation-urn>` | View messages in a conversation |
+| `lnk messages send <username> <text>` | Send a message to a user |
+| `lnk messages reply <conversation-urn> <text>` | Reply to a conversation |
+
+**Aliases**: `msg`, `dm` (e.g., `lnk msg list`)
+
+### Feed
+
+| Command | Description |
+|---------|-------------|
+| `lnk feed` | Read your feed |
+| `lnk feed --limit 20` | Read more feed items |
 
 ## Agent Integration
 
@@ -159,8 +170,24 @@ lnk profile me --json
 ```
 
 ```bash
-# Read feed as JSON
-lnk feed --limit 5 --json
+# Search for people
+lnk search people "iOS developer" --json
+```
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "urn": "urn:li:member:123456",
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "headline": "Senior iOS Developer",
+      "location": "San Francisco",
+      "profileUrl": "https://www.linkedin.com/in/janesmith"
+    }
+  ]
+}
 ```
 
 ### Error Format
@@ -183,6 +210,19 @@ lnk feed --limit 5 --json
 | 1 | General error |
 | 2 | Authentication failure |
 
+## Known Limitations
+
+LinkedIn frequently changes their internal APIs. Some features may not work reliably:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Profile viewing | ✅ Working | |
+| Post create/delete | ✅ Working | |
+| Search people | ✅ Working | |
+| Search companies | ✅ Working | |
+| Feed | ⚠️ Limited | LinkedIn has restricted feed API access |
+| Messaging | ⚠️ Limited | LinkedIn has restricted messaging API access |
+
 ## Configuration
 
 Credentials are stored in:
@@ -192,10 +232,10 @@ You can customize the location using the `XDG_CONFIG_HOME` environment variable.
 
 ## Supported Platforms
 
-| Platform | Safari | Chrome | Firefox | Brave | Edge | Arc | Helium | Opera | Vivaldi |
-|----------|--------|--------|---------|-------|------|-----|--------|-------|---------|
-| macOS | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Linux | No | Yes | Yes | Yes | Yes | No | No | Yes | Yes |
+| Platform | Safari | Chrome | Firefox | Brave | Arc |
+|----------|--------|--------|---------|-------|-----|
+| macOS | Yes | Yes | Yes | Yes | Yes |
+| Linux | No | Yes | Yes | Yes | No |
 
 ## Troubleshooting
 
@@ -205,13 +245,12 @@ Grant Full Disk Access to your terminal:
 1. Open System Preferences > Privacy & Security > Full Disk Access
 2. Add your terminal application (Terminal, iTerm2, etc.)
 
-### "Chrome decryption failed"
+### "LinkedIn requires verification"
 
-On macOS, Chrome stores its encryption key in Keychain. Make sure:
-1. Chrome is properly installed
-2. You've logged into Chrome at least once
-
-On Linux, the key is stored in GNOME Keyring or uses a default key.
+LinkedIn may require captcha or 2FA verification after multiple login attempts. Solutions:
+1. Wait a few minutes and try again
+2. Use browser cookie authentication instead
+3. Log in via browser first, then extract cookies
 
 ### "No LinkedIn cookies found"
 
@@ -232,12 +271,6 @@ go build -o lnk ./cmd/lnk
 
 ```bash
 go test ./...
-```
-
-### Linting
-
-```bash
-golangci-lint run
 ```
 
 ## Disclaimer

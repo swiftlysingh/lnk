@@ -83,19 +83,21 @@ type FeedItem struct {
 
 // Conversation represents a LinkedIn messaging conversation.
 type Conversation struct {
-	URN           string    `json:"urn"`
-	Participants  []Profile `json:"participants"`
-	LastMessage   *Message  `json:"lastMessage,omitempty"`
+	URN            string    `json:"urn"`
+	Participants   []Profile `json:"participants"`
+	LastMessage    *Message  `json:"lastMessage,omitempty"`
 	LastActivityAt time.Time `json:"lastActivityAt"`
-	Unread        bool      `json:"unread"`
+	Unread         bool      `json:"unread"`
+	TotalEvents    int       `json:"totalEvents,omitempty"`
 }
 
 // Message represents a LinkedIn message.
 type Message struct {
-	URN       string    `json:"urn"`
-	SenderURN string    `json:"senderUrn"`
-	Text      string    `json:"text"`
-	CreatedAt time.Time `json:"createdAt"`
+	URN        string    `json:"urn"`
+	SenderURN  string    `json:"senderUrn"`
+	SenderName string    `json:"senderName,omitempty"`
+	Text       string    `json:"text"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 // SearchResult represents a search result item.
@@ -109,13 +111,16 @@ type SearchResult struct {
 
 // Company represents a LinkedIn company.
 type Company struct {
-	URN         string `json:"urn"`
-	Name        string `json:"name"`
-	Industry    string `json:"industry,omitempty"`
-	Description string `json:"description,omitempty"`
-	Website     string `json:"website,omitempty"`
-	LogoURL     string `json:"logoUrl,omitempty"`
+	URN           string `json:"urn"`
+	Name          string `json:"name"`
+	Industry      string `json:"industry,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Website       string `json:"website,omitempty"`
+	LogoURL       string `json:"logoUrl,omitempty"`
 	EmployeeCount string `json:"employeeCount,omitempty"`
+	Location      string `json:"location,omitempty"`
+	FollowerCount string `json:"followerCount,omitempty"`
+	CompanyURL    string `json:"companyUrl,omitempty"`
 }
 
 // Job represents a LinkedIn job posting.

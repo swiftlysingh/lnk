@@ -73,9 +73,9 @@ func getChromiumConfig(browser Browser) chromiumBrowserConfig {
 	case BrowserHelium:
 		return chromiumBrowserConfig{
 			name:            "Helium",
-			macOSPath:       "Helium",
+			macOSPath:       "net.imput.helium",
 			linuxPath:       "helium",
-			keychainService: "Helium Safe Storage",
+			keychainService: "Helium Storage Key",
 			keychainAccount: "Helium",
 		}
 	case BrowserOpera:

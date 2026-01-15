@@ -59,6 +59,10 @@ func NewClient(opts ...ClientOption) *Client {
 	c := &Client{
 		httpClient: &http.Client{
 			Timeout: DefaultTimeout,
+			// Don't follow redirects - LinkedIn API redirects indicate auth issues.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		baseURL: BaseURL,
 	}
@@ -196,6 +200,23 @@ func (c *Client) handleResponse(resp *http.Response, result any) error {
 		return &Error{
 			Code:    ErrCodeNetworkError,
 			Message: fmt.Sprintf("failed to read response: %v", err),
+		}
+	}
+
+	// Check for redirect (302) - indicates session issue.
+	if resp.StatusCode == http.StatusFound {
+		// Check if LinkedIn is clearing our session.
+		for _, cookie := range resp.Cookies() {
+			if cookie.Name == "li_at" && cookie.Value == "delete me" {
+				return &Error{
+					Code:    ErrCodeAuthExpired,
+					Message: "session invalid or expired. Run: lnk auth login",
+				}
+			}
+		}
+		return &Error{
+			Code:    ErrCodeAuthExpired,
+			Message: "session redirect detected. Run: lnk auth login",
 		}
 	}
 

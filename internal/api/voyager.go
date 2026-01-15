@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // VoyagerResponse wraps LinkedIn's Voyager API response format.
@@ -51,12 +52,14 @@ func (c *Client) GetMyProfile(ctx context.Context) (*Profile, error) {
 
 // GetProfile fetches a profile by public identifier (username).
 func (c *Client) GetProfile(ctx context.Context, publicID string) (*Profile, error) {
-	// URL encode the public ID.
-	encodedID := url.PathEscape(publicID)
+	// Use the voyagerIdentityDashProfiles endpoint.
+	query := url.Values{}
+	query.Set("q", "memberIdentity")
+	query.Set("memberIdentity", publicID)
+	query.Set("decorationId", "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-19")
 
-	path := fmt.Sprintf("/identity/profiles/%s/profileView", encodedID)
 	var result VoyagerResponse
-	if err := c.Get(ctx, path, nil, &result); err != nil {
+	if err := c.Get(ctx, "/voyagerIdentityDashProfiles", query, &result); err != nil {
 		return nil, err
 	}
 
@@ -100,10 +103,18 @@ func parseProfileFromResponse(resp *VoyagerResponse) (*Profile, error) {
 		}
 	}
 
-	// The profile data can be in different places depending on the endpoint.
-	// Try to find it in the included array first.
-	profile := &Profile{}
+	// First, try to get the target URN from data.*elements.
+	targetURN := ""
+	if len(resp.Data) > 0 {
+		var dataResp struct {
+			Elements []string `json:"*elements"`
+		}
+		if err := json.Unmarshal(resp.Data, &dataResp); err == nil && len(dataResp.Elements) > 0 {
+			targetURN = dataResp.Elements[0]
+		}
+	}
 
+	// Look for the profile with matching URN in included array.
 	for _, item := range resp.Included {
 		var entity map[string]json.RawMessage
 		if err := json.Unmarshal(item, &entity); err != nil {
@@ -114,21 +125,20 @@ func parseProfileFromResponse(resp *VoyagerResponse) (*Profile, error) {
 		if entityURN, ok := entity["entityUrn"]; ok {
 			var urn string
 			if err := json.Unmarshal(entityURN, &urn); err == nil {
-				if strings.Contains(urn, "fsd_profile") || strings.Contains(urn, "member") {
-					if err := parseProfileEntity(item, profile); err == nil {
-						if profile.FirstName != "" || profile.PublicID != "" {
+				// If we have a target URN, only match that one.
+				if targetURN != "" {
+					if urn == targetURN {
+						profile := &Profile{}
+						if err := parseProfileEntity(item, profile); err == nil {
 							return profile, nil
 						}
 					}
+					continue
 				}
-			}
-		}
 
-		// Check for $type field.
-		if typeField, ok := entity["$type"]; ok {
-			var typeName string
-			if err := json.Unmarshal(typeField, &typeName); err == nil {
-				if strings.Contains(typeName, "Profile") || strings.Contains(typeName, "MiniProfile") {
+				// Otherwise, return first profile found.
+				if strings.Contains(urn, "fsd_profile") || strings.Contains(urn, "member") {
+					profile := &Profile{}
 					if err := parseProfileEntity(item, profile); err == nil {
 						if profile.FirstName != "" || profile.PublicID != "" {
 							return profile, nil
@@ -141,16 +151,12 @@ func parseProfileFromResponse(resp *VoyagerResponse) (*Profile, error) {
 
 	// Try parsing the data field directly.
 	if len(resp.Data) > 0 {
+		profile := &Profile{}
 		if err := parseProfileEntity(resp.Data, profile); err == nil {
 			if profile.FirstName != "" || profile.PublicID != "" {
 				return profile, nil
 			}
 		}
-	}
-
-	// If we got here with some data, return what we have.
-	if profile.URN != "" || profile.FirstName != "" || profile.PublicID != "" {
-		return profile, nil
 	}
 
 	return nil, &Error{
@@ -251,6 +257,7 @@ type FeedOptions struct {
 }
 
 // GetFeed fetches the user's LinkedIn feed.
+// Note: LinkedIn has restricted their feed API. This may not work reliably.
 func (c *Client) GetFeed(ctx context.Context, opts *FeedOptions) ([]FeedItem, error) {
 	if opts == nil {
 		opts = &FeedOptions{Limit: 10}
@@ -259,18 +266,59 @@ func (c *Client) GetFeed(ctx context.Context, opts *FeedOptions) ([]FeedItem, er
 		opts.Limit = 10
 	}
 
-	query := url.Values{}
-	query.Set("count", fmt.Sprintf("%d", opts.Limit))
-	query.Set("start", fmt.Sprintf("%d", opts.Start))
-	query.Set("q", "feedByType")
-	query.Set("feedType", "HOMEPAGE")
-
-	var result VoyagerResponse
-	if err := c.Get(ctx, "/feed/updatesV2", query, &result); err != nil {
-		return nil, err
+	// Try multiple endpoint formats as LinkedIn changes them frequently.
+	endpoints := []struct {
+		path  string
+		query url.Values
+	}{
+		{
+			path: "/feed/updatesV2",
+			query: url.Values{
+				"count":    {fmt.Sprintf("%d", opts.Limit)},
+				"start":    {fmt.Sprintf("%d", opts.Start)},
+				"q":        {"feedByHasLikedOrCommented"},
+				"moduleKey": {"feedModule"},
+			},
+		},
+		{
+			path: "/feed/updatesV2",
+			query: url.Values{
+				"count":     {fmt.Sprintf("%d", opts.Limit)},
+				"start":     {fmt.Sprintf("%d", opts.Start)},
+				"q":         {"feedByType"},
+				"feedType":  {"HOMEPAGE"},
+			},
+		},
 	}
 
-	return parseFeedFromResponse(&result)
+	var lastErr error
+	for _, ep := range endpoints {
+		var result VoyagerResponse
+		if err := c.Get(ctx, ep.path, ep.query, &result); err != nil {
+			lastErr = err
+			continue
+		}
+
+		items, err := parseFeedFromResponse(&result)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if len(items) > 0 {
+			return items, nil
+		}
+	}
+
+	if lastErr != nil {
+		// Provide helpful error message about LinkedIn API changes.
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "LinkedIn feed API is currently unavailable. LinkedIn frequently changes their internal API. Try 'lnk profile get <username>' to view specific profiles instead.",
+		}
+	}
+
+	return []FeedItem{}, nil
 }
 
 // parseFeedFromResponse extracts feed items from a Voyager response.
@@ -364,53 +412,43 @@ func parseFeedItem(data json.RawMessage) (*FeedItem, error) {
 
 // CreatePost creates a new LinkedIn post.
 func (c *Client) CreatePost(ctx context.Context, text string) (*Post, error) {
-	// First get the current user's URN.
-	profile, err := c.GetMyProfile(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get profile for posting: %w", err)
-	}
-
-	authorURN := profile.URN
-	if authorURN == "" {
-		return nil, &Error{
-			Code:    ErrCodeServerError,
-			Message: "could not determine author URN",
-		}
-	}
-
-	// Create post payload.
+	// Use the Voyager content creation endpoint.
 	payload := map[string]any{
-		"author":               authorURN,
-		"lifecycleState":       "PUBLISHED",
-		"specificContent": map[string]any{
-			"com.linkedin.ugc.ShareContent": map[string]any{
-				"shareCommentary": map[string]any{
-					"text": text,
-				},
-				"shareMediaCategory": "NONE",
-			},
+		"visibleToConnectionsOnly":  false,
+		"externalAudienceProviders": []any{},
+		"commentaryV2": map[string]any{
+			"text":       text,
+			"attributes": []any{},
 		},
-		"visibility": map[string]any{
-			"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
-		},
+		"origin":               "FEED",
+		"allowedCommentersScope": "ALL",
+		"postState":            "PUBLISHED",
 	}
 
-	var result map[string]any
-	if err := c.Post(ctx, "/ugcPosts", payload, &result); err != nil {
+	var result struct {
+		Data struct {
+			Status struct {
+				URN      string `json:"urn"`
+				UpdateV2 string `json:"*updateV2"`
+			} `json:"status"`
+		} `json:"data"`
+	}
+
+	if err := c.Post(ctx, "/contentcreation/normShares", payload, &result); err != nil {
 		return nil, err
 	}
 
-	// Extract the created post URN.
-	postURN := ""
-	if id, ok := result["id"].(string); ok {
-		postURN = id
-	}
-
 	return &Post{
-		URN:       postURN,
-		AuthorURN: authorURN,
-		Text:      text,
+		URN:  result.Data.Status.URN,
+		Text: text,
 	}, nil
+}
+
+// DeletePost deletes a post by URN.
+func (c *Client) DeletePost(ctx context.Context, urn string) error {
+	// URL encode the URN.
+	encodedURN := url.PathEscape(urn)
+	return c.Delete(ctx, "/contentcreation/normShares/"+encodedURN)
 }
 
 // GetPost fetches a post by URN.
@@ -435,4 +473,508 @@ func (c *Client) GetPost(ctx context.Context, urn string) (*Post, error) {
 		Code:    ErrCodeNotFound,
 		Message: "post not found",
 	}
+}
+
+// SearchOptions configures search parameters.
+type SearchOptions struct {
+	Limit int
+	Start int
+}
+
+// SearchPeople searches for people on LinkedIn.
+func (c *Client) SearchPeople(ctx context.Context, query string, opts *SearchOptions) ([]Profile, error) {
+	if opts == nil {
+		opts = &SearchOptions{Limit: 10}
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 10
+	}
+
+	// URL encode the query for the GraphQL variables.
+	encodedQuery := url.QueryEscape(query)
+
+	// Build the GraphQL query URL.
+	graphQLPath := fmt.Sprintf(
+		"/graphql?variables=(start:%d,origin:GLOBAL_SEARCH_HEADER,query:(keywords:%s,flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&queryId=voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
+		opts.Start,
+		encodedQuery,
+	)
+
+	var result struct {
+		Data     json.RawMessage   `json:"data"`
+		Included []json.RawMessage `json:"included"`
+	}
+
+	if err := c.Get(ctx, graphQLPath, nil, &result); err != nil {
+		return nil, err
+	}
+
+	return parseSearchPeopleResults(result.Included)
+}
+
+// parseSearchPeopleResults extracts profiles from search results.
+func parseSearchPeopleResults(included []json.RawMessage) ([]Profile, error) {
+	var profiles []Profile
+
+	for _, raw := range included {
+		var entity struct {
+			Type             string `json:"$type"`
+			Title            *struct {
+				Text string `json:"text"`
+			} `json:"title"`
+			PrimarySubtitle  *struct {
+				Text string `json:"text"`
+			} `json:"primarySubtitle"`
+			SecondarySubtitle *struct {
+				Text string `json:"text"`
+			} `json:"secondarySubtitle"`
+			NavigationURL    string `json:"navigationUrl"`
+			TrackingURN      string `json:"trackingUrn"`
+			BadgeText        *struct {
+				Text string `json:"text"`
+			} `json:"badgeText"`
+		}
+
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+
+		// Only process EntityResultViewModel for people.
+		if entity.Type != "com.linkedin.voyager.dash.search.EntityResultViewModel" {
+			continue
+		}
+
+		// Check if it's a person (trackingUrn contains "member").
+		if !strings.Contains(entity.TrackingURN, "member") {
+			continue
+		}
+
+		profile := Profile{
+			URN:        entity.TrackingURN,
+			ProfileURL: entity.NavigationURL,
+		}
+
+		if entity.Title != nil {
+			// Parse first and last name from title.
+			parts := strings.SplitN(entity.Title.Text, " ", 2)
+			if len(parts) >= 1 {
+				profile.FirstName = parts[0]
+			}
+			if len(parts) >= 2 {
+				profile.LastName = parts[1]
+			}
+		}
+
+		if entity.PrimarySubtitle != nil {
+			profile.Headline = entity.PrimarySubtitle.Text
+		}
+
+		if entity.SecondarySubtitle != nil {
+			profile.Location = entity.SecondarySubtitle.Text
+		}
+
+		// Extract public ID from URL.
+		if entity.NavigationURL != "" {
+			if idx := strings.Index(entity.NavigationURL, "/in/"); idx != -1 {
+				publicID := entity.NavigationURL[idx+4:]
+				if qIdx := strings.Index(publicID, "?"); qIdx != -1 {
+					publicID = publicID[:qIdx]
+				}
+				profile.PublicID = publicID
+			}
+		}
+
+		profiles = append(profiles, profile)
+	}
+
+	return profiles, nil
+}
+
+// SearchCompanies searches for companies on LinkedIn.
+func (c *Client) SearchCompanies(ctx context.Context, query string, opts *SearchOptions) ([]Company, error) {
+	if opts == nil {
+		opts = &SearchOptions{Limit: 10}
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 10
+	}
+
+	// URL encode the query for the GraphQL variables.
+	encodedQuery := url.QueryEscape(query)
+
+	// Build the GraphQL query URL.
+	graphQLPath := fmt.Sprintf(
+		"/graphql?variables=(start:%d,origin:GLOBAL_SEARCH_HEADER,query:(keywords:%s,flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(COMPANIES))),includeFiltersInResponse:false))&queryId=voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
+		opts.Start,
+		encodedQuery,
+	)
+
+	var result struct {
+		Data     json.RawMessage   `json:"data"`
+		Included []json.RawMessage `json:"included"`
+	}
+
+	if err := c.Get(ctx, graphQLPath, nil, &result); err != nil {
+		return nil, err
+	}
+
+	return parseSearchCompanyResults(result.Included)
+}
+
+// parseSearchCompanyResults extracts companies from search results.
+func parseSearchCompanyResults(included []json.RawMessage) ([]Company, error) {
+	var companies []Company
+
+	for _, raw := range included {
+		var entity struct {
+			Type             string `json:"$type"`
+			Title            *struct {
+				Text string `json:"text"`
+			} `json:"title"`
+			PrimarySubtitle  *struct {
+				Text string `json:"text"`
+			} `json:"primarySubtitle"`
+			SecondarySubtitle *struct {
+				Text string `json:"text"`
+			} `json:"secondarySubtitle"`
+			Summary          *struct {
+				Text string `json:"text"`
+			} `json:"summary"`
+			NavigationURL    string `json:"navigationUrl"`
+			TrackingURN      string `json:"trackingUrn"`
+		}
+
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+
+		// Only process EntityResultViewModel for companies.
+		if entity.Type != "com.linkedin.voyager.dash.search.EntityResultViewModel" {
+			continue
+		}
+
+		// Check if it's a company (trackingUrn contains "company").
+		if !strings.Contains(entity.TrackingURN, "company") {
+			continue
+		}
+
+		company := Company{
+			URN:        entity.TrackingURN,
+			CompanyURL: entity.NavigationURL,
+		}
+
+		if entity.Title != nil {
+			company.Name = entity.Title.Text
+		}
+
+		if entity.PrimarySubtitle != nil {
+			// Primary subtitle contains "Industry • Location".
+			parts := strings.SplitN(entity.PrimarySubtitle.Text, " • ", 2)
+			if len(parts) >= 1 {
+				company.Industry = parts[0]
+			}
+			if len(parts) >= 2 {
+				company.Location = parts[1]
+			}
+		}
+
+		if entity.SecondarySubtitle != nil {
+			company.FollowerCount = entity.SecondarySubtitle.Text
+		}
+
+		if entity.Summary != nil {
+			company.Description = entity.Summary.Text
+		}
+
+		companies = append(companies, company)
+	}
+
+	return companies, nil
+}
+
+// MessagingOptions configures messaging requests.
+type MessagingOptions struct {
+	Limit int
+	Start int
+}
+
+// GetConversations fetches the user's messaging conversations.
+func (c *Client) GetConversations(ctx context.Context, opts *MessagingOptions) ([]Conversation, error) {
+	if opts == nil {
+		opts = &MessagingOptions{Limit: 20}
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 20
+	}
+
+	query := url.Values{}
+	query.Set("keyVersion", "LEGACY_INBOX")
+
+	var result VoyagerResponse
+	if err := c.Get(ctx, "/messaging/conversations", query, &result); err != nil {
+		// Check if the error message indicates a 500 status.
+		if strings.Contains(err.Error(), "status 500") {
+			return nil, &Error{
+				Code:    ErrCodeServerError,
+				Message: "LinkedIn messaging API is currently unavailable. LinkedIn restricts access to messaging via their internal API.",
+			}
+		}
+		return nil, err
+	}
+
+	return parseConversationsFromResponse(&result)
+}
+
+// parseConversationsFromResponse extracts conversations from a Voyager response.
+func parseConversationsFromResponse(resp *VoyagerResponse) ([]Conversation, error) {
+	if resp == nil {
+		return nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "empty response",
+		}
+	}
+
+	// Build a map of profiles from included data.
+	profiles := make(map[string]*Profile)
+	for _, raw := range resp.Included {
+		var entity struct {
+			Type             string `json:"$type"`
+			EntityURN        string `json:"entityUrn"`
+			FirstName        string `json:"firstName"`
+			LastName         string `json:"lastName"`
+			Occupation       string `json:"occupation"`
+			PublicIdentifier string `json:"publicIdentifier"`
+		}
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+		if strings.Contains(entity.Type, "MiniProfile") || strings.Contains(entity.Type, "Profile") {
+			if entity.EntityURN != "" {
+				profiles[entity.EntityURN] = &Profile{
+					URN:       entity.EntityURN,
+					FirstName: entity.FirstName,
+					LastName:  entity.LastName,
+					Headline:  entity.Occupation,
+					PublicID:  entity.PublicIdentifier,
+				}
+			}
+		}
+	}
+
+	var conversations []Conversation
+	for _, raw := range resp.Included {
+		var entity struct {
+			Type           string   `json:"$type"`
+			EntityURN      string   `json:"entityUrn"`
+			Read           bool     `json:"read"`
+			LastActivityAt int64    `json:"lastActivityAt"`
+			TotalEventCount int     `json:"totalEventCount"`
+			Participants   []string `json:"*participants"`
+			Events         []string `json:"*events"`
+		}
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+
+		if !strings.Contains(entity.Type, "Conversation") {
+			continue
+		}
+
+		conv := Conversation{
+			URN:         entity.EntityURN,
+			Unread:      !entity.Read,
+			TotalEvents: entity.TotalEventCount,
+		}
+
+		if entity.LastActivityAt > 0 {
+			conv.LastActivityAt = time.Unix(entity.LastActivityAt/1000, 0)
+		}
+
+		// Resolve participant profiles.
+		for _, pURN := range entity.Participants {
+			if p, ok := profiles[pURN]; ok {
+				conv.Participants = append(conv.Participants, *p)
+			}
+		}
+
+		conversations = append(conversations, conv)
+	}
+
+	return conversations, nil
+}
+
+// GetConversation fetches a specific conversation with messages.
+func (c *Client) GetConversation(ctx context.Context, conversationURN string) (*Conversation, []Message, error) {
+	// URL encode the URN.
+	encodedURN := url.PathEscape(conversationURN)
+
+	query := url.Values{}
+	query.Set("keyVersion", "LEGACY_INBOX")
+
+	var result VoyagerResponse
+	if err := c.Get(ctx, "/messaging/conversations/"+encodedURN+"/events", query, &result); err != nil {
+		return nil, nil, err
+	}
+
+	return parseConversationWithMessages(&result, conversationURN)
+}
+
+// parseConversationWithMessages extracts a conversation and its messages.
+func parseConversationWithMessages(resp *VoyagerResponse, conversationURN string) (*Conversation, []Message, error) {
+	if resp == nil {
+		return nil, nil, &Error{
+			Code:    ErrCodeServerError,
+			Message: "empty response",
+		}
+	}
+
+	// Build a map of profiles from included data.
+	profiles := make(map[string]*Profile)
+	for _, raw := range resp.Included {
+		var entity struct {
+			Type             string `json:"$type"`
+			EntityURN        string `json:"entityUrn"`
+			FirstName        string `json:"firstName"`
+			LastName         string `json:"lastName"`
+			Occupation       string `json:"occupation"`
+			PublicIdentifier string `json:"publicIdentifier"`
+		}
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+		if strings.Contains(entity.Type, "MiniProfile") || strings.Contains(entity.Type, "Profile") {
+			if entity.EntityURN != "" {
+				profiles[entity.EntityURN] = &Profile{
+					URN:       entity.EntityURN,
+					FirstName: entity.FirstName,
+					LastName:  entity.LastName,
+					Headline:  entity.Occupation,
+					PublicID:  entity.PublicIdentifier,
+				}
+			}
+		}
+	}
+
+	conv := &Conversation{URN: conversationURN}
+	var messages []Message
+
+	for _, raw := range resp.Included {
+		var entity struct {
+			Type         string `json:"$type"`
+			EntityURN    string `json:"entityUrn"`
+			CreatedAt    int64  `json:"createdAt"`
+			From         string `json:"*from"`
+			EventContent struct {
+				Type           string `json:"$type"`
+				AttributedBody struct {
+					Text string `json:"text"`
+				} `json:"attributedBody"`
+			} `json:"eventContent"`
+		}
+		if err := json.Unmarshal(raw, &entity); err != nil {
+			continue
+		}
+
+		if !strings.Contains(entity.Type, "Event") {
+			continue
+		}
+
+		// Only process message events.
+		if !strings.Contains(entity.EventContent.Type, "MessageEvent") {
+			continue
+		}
+
+		msg := Message{
+			URN:       entity.EntityURN,
+			SenderURN: entity.From,
+			Text:      entity.EventContent.AttributedBody.Text,
+		}
+
+		if entity.CreatedAt > 0 {
+			msg.CreatedAt = time.Unix(entity.CreatedAt/1000, 0)
+		}
+
+		// Get sender name.
+		if p, ok := profiles[entity.From]; ok {
+			msg.SenderName = p.FirstName + " " + p.LastName
+		}
+
+		messages = append(messages, msg)
+	}
+
+	// Sort messages by creation time (oldest first).
+	for i := 0; i < len(messages)-1; i++ {
+		for j := i + 1; j < len(messages); j++ {
+			if messages[i].CreatedAt.After(messages[j].CreatedAt) {
+				messages[i], messages[j] = messages[j], messages[i]
+			}
+		}
+	}
+
+	return conv, messages, nil
+}
+
+// SendMessage sends a message to a profile.
+func (c *Client) SendMessage(ctx context.Context, profileURN string, text string) (*Message, error) {
+	// First, we need to get or create a conversation with this profile.
+	// LinkedIn requires creating a conversation first or using an existing one.
+
+	// Get the current user's profile URN.
+	myProfile, err := c.GetMyProfile(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get own profile: %w", err)
+	}
+
+	// Create the message payload.
+	payload := map[string]any{
+		"keyVersion": "LEGACY_INBOX",
+		"conversationCreate": map[string]any{
+			"recipients": []string{profileURN},
+			"subtype":    "MEMBER_TO_MEMBER",
+		},
+		"message": map[string]any{
+			"body": map[string]any{
+				"text": text,
+			},
+		},
+	}
+
+	var result map[string]any
+	if err := c.Post(ctx, "/messaging/conversations", payload, &result); err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		SenderURN: myProfile.URN,
+		Text:      text,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+// SendMessageToConversation sends a message to an existing conversation.
+func (c *Client) SendMessageToConversation(ctx context.Context, conversationURN string, text string) (*Message, error) {
+	// URL encode the URN.
+	encodedURN := url.PathEscape(conversationURN)
+
+	payload := map[string]any{
+		"keyVersion": "LEGACY_INBOX",
+		"eventCreate": map[string]any{
+			"value": map[string]any{
+				"com.linkedin.voyager.messaging.create.MessageCreate": map[string]any{
+					"body": text,
+					"attachments": []any{},
+				},
+			},
+		},
+	}
+
+	var result map[string]any
+	if err := c.Post(ctx, "/messaging/conversations/"+encodedURN+"/events", payload, &result); err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		Text:      text,
+		CreatedAt: time.Now(),
+	}, nil
 }
