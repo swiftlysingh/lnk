@@ -707,22 +707,74 @@ func (c *Client) GetConversations(ctx context.Context, opts *MessagingOptions) (
 		opts.Limit = 20
 	}
 
-	query := url.Values{}
-	query.Set("keyVersion", "LEGACY_INBOX")
-
-	var result VoyagerResponse
-	if err := c.Get(ctx, "/messaging/conversations", query, &result); err != nil {
-		// Check if the error message indicates a 500 status.
-		if strings.Contains(err.Error(), "status 500") {
-			return nil, &Error{
-				Code:    ErrCodeServerError,
-				Message: "LinkedIn messaging API is currently unavailable. LinkedIn restricts access to messaging via their internal API.",
-			}
-		}
-		return nil, err
+	// Try multiple endpoint strategies as LinkedIn changes their API frequently.
+	endpoints := []struct {
+		path  string
+		query url.Values
+	}{
+		// Strategy 1: New dash messaging with GraphQL decoration
+		{
+			path: "/voyagerMessagingDashConversations",
+			query: url.Values{
+				"decorationId": {"com.linkedin.voyager.dash.deco.messaging.FullConversation-46"},
+				"count":        {fmt.Sprintf("%d", opts.Limit)},
+				"q":            {"syncToken"},
+			},
+		},
+		// Strategy 2: Messaging GraphQL
+		{
+			path: "/voyagerMessagingGraphQL/graphql",
+			query: url.Values{
+				"queryId":   {"messengerConversations.b82e44e85e0e8d228d5bb0e67d1c5c79"},
+				"variables": {fmt.Sprintf("(count:%d)", opts.Limit)},
+			},
+		},
+		// Strategy 3: Legacy messaging API
+		{
+			path: "/messaging/conversations",
+			query: url.Values{
+				"keyVersion": {"LEGACY_INBOX"},
+			},
+		},
+		// Strategy 4: Dash messaging threads
+		{
+			path: "/voyagerMessagingDashMessagingThreads",
+			query: url.Values{
+				"decorationId": {"com.linkedin.voyager.dash.deco.messaging.Thread-7"},
+				"count":        {fmt.Sprintf("%d", opts.Limit)},
+				"q":            {"inboxThreads"},
+			},
+		},
 	}
 
-	return parseConversationsFromResponse(&result)
+	var lastErr error
+	for _, ep := range endpoints {
+		var result VoyagerResponse
+		if err := c.Get(ctx, ep.path, ep.query, &result); err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Check if we got a valid response with data.
+		if len(result.Included) > 0 {
+			conversations, err := parseConversationsFromResponse(&result)
+			if err == nil && len(conversations) > 0 {
+				return conversations, nil
+			}
+		}
+	}
+
+	if lastErr != nil {
+		if strings.Contains(lastErr.Error(), "status 500") || strings.Contains(lastErr.Error(), "status 400") {
+			return nil, &Error{
+				Code:    ErrCodeServerError,
+				Message: "LinkedIn messaging API is currently unavailable. LinkedIn frequently changes their internal API. Try using LinkedIn's web interface instead.",
+			}
+		}
+		return nil, lastErr
+	}
+
+	return []Conversation{}, nil
 }
 
 // parseConversationsFromResponse extracts conversations from a Voyager response.
