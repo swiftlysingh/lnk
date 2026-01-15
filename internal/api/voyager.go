@@ -481,9 +481,24 @@ type SearchOptions struct {
 	Start int
 }
 
+// searchResult is the common response structure for GraphQL search queries.
+type searchResult struct {
+	Data     json.RawMessage   `json:"data"`
+	Included []json.RawMessage `json:"included"`
+}
+
+// buildSearchPath constructs the GraphQL search path for a given result type.
+func buildSearchPath(query string, resultType string, start int) string {
+	encodedQuery := url.QueryEscape(query)
+	return fmt.Sprintf(
+		"/graphql?variables=(start:%d,origin:GLOBAL_SEARCH_HEADER,query:(keywords:%s,flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(%s))),includeFiltersInResponse:false))&queryId=voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
+		start,
+		encodedQuery,
+		resultType,
+	)
+}
+
 // SearchPeople searches for people on LinkedIn.
-//
-//nolint:dupl // SearchPeople and SearchCompanies have similar structure but different result types
 func (c *Client) SearchPeople(ctx context.Context, query string, opts *SearchOptions) ([]Profile, error) {
 	if opts == nil {
 		opts = &SearchOptions{Limit: 10}
@@ -492,22 +507,8 @@ func (c *Client) SearchPeople(ctx context.Context, query string, opts *SearchOpt
 		opts.Limit = 10
 	}
 
-	// URL encode the query for the GraphQL variables.
-	encodedQuery := url.QueryEscape(query)
-
-	// Build the GraphQL query URL.
-	graphQLPath := fmt.Sprintf(
-		"/graphql?variables=(start:%d,origin:GLOBAL_SEARCH_HEADER,query:(keywords:%s,flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&queryId=voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
-		opts.Start,
-		encodedQuery,
-	)
-
-	var result struct {
-		Data     json.RawMessage   `json:"data"`
-		Included []json.RawMessage `json:"included"`
-	}
-
-	if err := c.Get(ctx, graphQLPath, nil, &result); err != nil {
+	var result searchResult
+	if err := c.Get(ctx, buildSearchPath(query, "PEOPLE", opts.Start), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -593,8 +594,6 @@ func parseSearchPeopleResults(included []json.RawMessage) ([]Profile, error) {
 }
 
 // SearchCompanies searches for companies on LinkedIn.
-//
-//nolint:dupl // SearchPeople and SearchCompanies have similar structure but different result types
 func (c *Client) SearchCompanies(ctx context.Context, query string, opts *SearchOptions) ([]Company, error) {
 	if opts == nil {
 		opts = &SearchOptions{Limit: 10}
@@ -603,22 +602,8 @@ func (c *Client) SearchCompanies(ctx context.Context, query string, opts *Search
 		opts.Limit = 10
 	}
 
-	// URL encode the query for the GraphQL variables.
-	encodedQuery := url.QueryEscape(query)
-
-	// Build the GraphQL query URL.
-	graphQLPath := fmt.Sprintf(
-		"/graphql?variables=(start:%d,origin:GLOBAL_SEARCH_HEADER,query:(keywords:%s,flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(COMPANIES))),includeFiltersInResponse:false))&queryId=voyagerSearchDashClusters.b0928897b71bd00a5a7291755dcd64f0",
-		opts.Start,
-		encodedQuery,
-	)
-
-	var result struct {
-		Data     json.RawMessage   `json:"data"`
-		Included []json.RawMessage `json:"included"`
-	}
-
-	if err := c.Get(ctx, graphQLPath, nil, &result); err != nil {
+	var result searchResult
+	if err := c.Get(ctx, buildSearchPath(query, "COMPANIES", opts.Start), nil, &result); err != nil {
 		return nil, err
 	}
 
@@ -781,7 +766,7 @@ func (c *Client) GetConversations(ctx context.Context, opts *MessagingOptions) (
 	return []Conversation{}, nil
 }
 
-// extractProfilesFromIncluded builds a map of profiles from the included data.
+// extractProfilesFromIncluded builds a map of profiles from Voyager included data.
 func extractProfilesFromIncluded(included []json.RawMessage) map[string]*Profile {
 	profiles := make(map[string]*Profile)
 	for _, raw := range included {
